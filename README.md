@@ -65,23 +65,19 @@ SPENCER_PORT=8080 docker compose up -d
 
 ## One-command installer
 
-Once the image is published to the configured registry, Linux hosts can run:
+On Linux or macOS with Docker or Podman installed:
 
 ```bash
-curl -fsSL https://your-domain.example/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/spencrtech/data-backup-recovery-tool/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell:
+On Windows with Docker Desktop or Podman Desktop installed, run in PowerShell:
 
 ```powershell
-irm https://your-domain.example/install.ps1 | iex
+irm https://raw.githubusercontent.com/spencrtech/data-backup-recovery-tool/main/scripts/install.ps1 | iex
 ```
 
-The scripts detect Docker or Podman, pull the multi-architecture image, create persistent storage, start the service, wait for readiness, and print local/network URLs. Until the public download URL is configured, run the checked-in scripts directly and override the image if necessary:
-
-```bash
-SPENCER_IMAGE=ghcr.io/your-org/spencer-data-backup:latest ./scripts/install.sh
-```
+The scripts detect Docker or Podman, pull `ghcr.io/spencrtech/spencer-data-backup:latest`, create persistent storage, start the service, wait for readiness, and print local/network URLs. No repository clone or application configuration is required before installation.
 
 ## Storage destinations
 

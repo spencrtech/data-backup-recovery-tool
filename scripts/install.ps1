@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Image = if ($env:SPENCER_IMAGE) { $env:SPENCER_IMAGE } elseif ($env:DISPENSER_IMAGE) { $env:DISPENSER_IMAGE } else { "ghcr.io/spencertech/spencer-data-backup:latest" }
+$Image = if ($env:SPENCER_IMAGE) { $env:SPENCER_IMAGE } elseif ($env:DISPENSER_IMAGE) { $env:DISPENSER_IMAGE } else { "ghcr.io/spencrtech/spencer-data-backup:latest" }
 $Port = if ($env:SPENCER_PORT) { $env:SPENCER_PORT } elseif ($env:DISPENSER_PORT) { $env:DISPENSER_PORT } else { "7480" }
 $Container = "spencer-data-backup"
 $Volume = "spencer-data"

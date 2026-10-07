@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-IMAGE="${SPENCER_IMAGE:-${DISPENSER_IMAGE:-ghcr.io/spencertech/spencer-data-backup:latest}}"
+IMAGE="${SPENCER_IMAGE:-${DISPENSER_IMAGE:-ghcr.io/spencrtech/spencer-data-backup:latest}}"
 PORT="${SPENCER_PORT:-${DISPENSER_PORT:-7480}}"
 CONTAINER="spencer-data-backup"
 VOLUME="spencer-data"
