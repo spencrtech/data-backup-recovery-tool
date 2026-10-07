@@ -13,6 +13,9 @@ const { EventBus } = require('./events');
 const { JobWorker } = require('./worker');
 const { Scheduler } = require('./scheduler');
 const { testDestination } = require('./destinations');
+const { redactSensitive } = require('./redact');
+
+const safeError = (error) => redactSensitive(error?.message || error || 'Unexpected error');
 
 function publicSource(row) {
     return {
@@ -54,7 +57,11 @@ function slugId(prefix) {
 }
 
 async function inspectMongo(config) {
-    const client = new MongoClient(config.uri, { serverSelectionTimeoutMS: 7000, connectTimeoutMS: 7000 });
+    const client = new MongoClient(config.uri, {
+        serverSelectionTimeoutMS: 7000,
+        connectTimeoutMS: 7000,
+        ...(config.authDatabase && !/[?&]authSource=/i.test(config.uri) ? { authSource: config.authDatabase } : {})
+    });
     try {
         await client.connect();
         const db = client.db(config.database);
@@ -106,7 +113,7 @@ async function startServer(options = {}) {
             await fsp.access(dataDir, fs.constants.R_OK | fs.constants.W_OK);
             res.json({ status: 'ready', setupRequired: !store.getSetting('setup_complete', false) });
         } catch (error) {
-            res.status(503).json({ status: 'not_ready', error: error.message });
+            res.status(503).json({ status: 'not_ready', error: safeError(error) });
         }
     });
 
@@ -143,7 +150,7 @@ async function startServer(options = {}) {
             auth.setCookie(req, res, session.token);
             res.status(201).json({ success: true });
         } catch (error) {
-            res.status(400).json({ error: error.message });
+            res.status(400).json({ error: safeError(error) });
         }
     });
 
@@ -270,47 +277,51 @@ async function startServer(options = {}) {
         res.json({ sources: store.db.prepare('SELECT * FROM sources ORDER BY created_at DESC').all().map(publicSource) });
     });
     app.post('/api/sources/test', async (req, res) => {
-        const { uri, database } = req.body || {};
+        const { uri, database, authDatabase = 'admin' } = req.body || {};
         if (!uri || !database) return res.status(400).json({ error: 'MongoDB URI and database are required' });
-        try { res.json(await inspectMongo({ uri, database })); }
-        catch (error) { res.status(400).json({ error: error.message }); }
+        try { res.json(await inspectMongo({ uri, database, authDatabase })); }
+        catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.post('/api/sources', async (req, res) => {
-        const { name, uri, database } = req.body || {};
+        const { name, uri, database, authDatabase = 'admin' } = req.body || {};
         if (!name || !uri || !database) return res.status(400).json({ error: 'Name, MongoDB URI, and database are required' });
         try {
-            const test = await inspectMongo({ uri, database });
+            const test = await inspectMongo({ uri, database, authDatabase });
             const id = slugId('src');
             store.db.prepare(`INSERT INTO sources (id, name, type, encrypted_config) VALUES (?, ?, 'mongodb', ?)`)
-                .run(id, name.trim(), store.encrypt({ uri, database }));
+                .run(id, name.trim(), store.encrypt({ uri, database, authDatabase }));
             store.audit(req.user.username, 'source.created', 'source', id, { name, database });
             res.status(201).json({ source: publicSource(store.db.prepare('SELECT * FROM sources WHERE id = ?').get(id)), test });
-        } catch (error) { res.status(400).json({ error: error.message }); }
+        } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.post('/api/sources/:id/test', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM sources WHERE id = ?').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Source not found' });
         try { res.json(await inspectMongo(store.decrypt(row.encrypted_config))); }
-        catch (error) { res.status(400).json({ error: error.message }); }
+        catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.get('/api/sources/:id/metrics', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM sources WHERE id = ?').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Source not found' });
         try { res.json(await inspectMongo(store.decrypt(row.encrypted_config))); }
-        catch (error) { res.status(400).json({ error: error.message }); }
+        catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.patch('/api/sources/:id', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM sources WHERE id = ?').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Source not found' });
         const current = store.decrypt(row.encrypted_config);
-        const next = { uri: req.body.uri || current.uri, database: req.body.database || current.database };
+        const next = {
+            uri: req.body.uri || current.uri,
+            database: req.body.database || current.database,
+            authDatabase: req.body.authDatabase || current.authDatabase || 'admin'
+        };
         try {
             if (req.body.uri || req.body.database) await inspectMongo(next);
             store.db.prepare(`UPDATE sources SET name = ?, encrypted_config = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
                 .run(String(req.body.name || row.name).trim(), store.encrypt(next), req.body.enabled === undefined ? row.enabled : Number(Boolean(req.body.enabled)), row.id);
             store.audit(req.user.username, 'source.updated', 'source', row.id);
             res.json({ source: publicSource(store.db.prepare('SELECT * FROM sources WHERE id = ?').get(row.id)) });
-        } catch (error) { res.status(400).json({ error: error.message }); }
+        } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.delete('/api/sources/:id', (req, res) => {
         const result = store.db.prepare('UPDATE sources SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
@@ -335,13 +346,13 @@ async function startServer(options = {}) {
                 .run(id, name.trim(), type, row.config, Object.keys(secret).length ? store.encrypt(secret) : null);
             store.audit(req.user.username, 'destination.created', 'destination', id, { name, type });
             res.status(201).json({ destination: publicDestination(store.db.prepare('SELECT * FROM destinations WHERE id = ?').get(id)) });
-        } catch (error) { res.status(400).json({ error: error.message }); }
+        } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.post('/api/destinations/:id/test', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM destinations WHERE id = ?').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Destination not found' });
         try { res.json(await testDestination(row, row.encrypted_secret ? store.decrypt(row.encrypted_secret) : {})); }
-        catch (error) { res.status(400).json({ error: error.message }); }
+        catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.patch('/api/destinations/:id', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM destinations WHERE id = ?').get(req.params.id);
@@ -355,7 +366,7 @@ async function startServer(options = {}) {
                 .run(String(req.body.name || row.name).trim(), candidate.config, Object.keys(secret).length ? store.encrypt(secret) : null, req.body.enabled === undefined ? row.enabled : Number(Boolean(req.body.enabled)), row.id);
             store.audit(req.user.username, 'destination.updated', 'destination', row.id);
             res.json({ destination: publicDestination(store.db.prepare('SELECT * FROM destinations WHERE id = ?').get(row.id)) });
-        } catch (error) { res.status(400).json({ error: error.message }); }
+        } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.delete('/api/destinations/:id', (req, res) => {
         const result = store.db.prepare('UPDATE destinations SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
@@ -375,35 +386,39 @@ async function startServer(options = {}) {
         res.json({ targets: store.db.prepare('SELECT * FROM restore_targets ORDER BY created_at DESC').all().map(publicRestoreTarget) });
     });
     app.post('/api/restore-targets', async (req, res) => {
-        const { name, uri, database } = req.body || {};
+        const { name, uri, database, authDatabase = 'admin' } = req.body || {};
         if (!name || !uri || !database) return res.status(400).json({ error: 'Name, MongoDB URI, and target database are required' });
         try {
-            const test = await inspectMongo({ uri, database });
+            const test = await inspectMongo({ uri, database, authDatabase });
             const id = slugId('target');
             store.db.prepare(`INSERT INTO restore_targets (id, name, database_name, encrypted_config) VALUES (?, ?, ?, ?)`)
-                .run(id, name.trim(), database.trim(), store.encrypt({ uri, database: database.trim() }));
+                .run(id, name.trim(), database.trim(), store.encrypt({ uri, database: database.trim(), authDatabase }));
             store.audit(req.user.username, 'restore_target.created', 'restore_target', id, { name, database });
             res.status(201).json({ target: publicRestoreTarget(store.db.prepare('SELECT * FROM restore_targets WHERE id = ?').get(id)), test });
-        } catch (error) { res.status(400).json({ error: error.message }); }
+        } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.post('/api/restore-targets/:id/test', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM restore_targets WHERE id = ?').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Restore target not found' });
         try { res.json(await inspectMongo(store.decrypt(row.encrypted_config))); }
-        catch (error) { res.status(400).json({ error: error.message }); }
+        catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.patch('/api/restore-targets/:id', async (req, res) => {
         const row = store.db.prepare('SELECT * FROM restore_targets WHERE id = ?').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Restore target not found' });
         const current = store.decrypt(row.encrypted_config);
-        const next = { uri: req.body.uri || current.uri, database: req.body.database || current.database };
+        const next = {
+            uri: req.body.uri || current.uri,
+            database: req.body.database || current.database,
+            authDatabase: req.body.authDatabase || current.authDatabase || 'admin'
+        };
         try {
             if (req.body.uri || req.body.database) await inspectMongo(next);
             store.db.prepare(`UPDATE restore_targets SET name = ?, database_name = ?, encrypted_config = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
                 .run(String(req.body.name || row.name).trim(), next.database, store.encrypt(next), req.body.enabled === undefined ? row.enabled : Number(Boolean(req.body.enabled)), row.id);
             store.audit(req.user.username, 'restore_target.updated', 'restore_target', row.id);
             res.json({ target: publicRestoreTarget(store.db.prepare('SELECT * FROM restore_targets WHERE id = ?').get(row.id)) });
-        } catch (error) { res.status(400).json({ error: error.message }); }
+        } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.delete('/api/restore-targets/:id', (req, res) => {
         const result = store.db.prepare('UPDATE restore_targets SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);

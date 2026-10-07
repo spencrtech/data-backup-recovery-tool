@@ -12,6 +12,7 @@ FROM node:22-bookworm-slim
 COPY --from=mongo-tools /usr/bin/mongodump /usr/local/bin/mongodump
 COPY --from=mongo-tools /usr/bin/mongorestore /usr/local/bin/mongorestore
 COPY --from=mongo-tools /mongo-libs /opt/mongo-libs
+COPY --from=mongo-tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
 COPY package*.json ./

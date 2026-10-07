@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { upload, download, remove } = require('./destinations');
+const { redactSensitive } = require('./redact');
 
 function run(command, args, onOutput) {
     return new Promise((resolve, reject) => {
@@ -14,8 +15,8 @@ function run(command, args, onOutput) {
             stderr = `${stderr}${chunk}`.slice(-12000);
             onOutput?.(chunk.toString());
         });
-        child.on('error', reject);
-        child.on('close', (code) => code === 0 ? resolve() : reject(new Error(stderr.trim() || `${command} exited with ${code}`)));
+        child.on('error', (error) => reject(new Error(redactSensitive(error.message))));
+        child.on('close', (code) => code === 0 ? resolve() : reject(new Error(redactSensitive(stderr.trim() || `${command} exited with ${code}`))));
     });
 }
 
@@ -85,13 +86,17 @@ class JobWorker {
             started_at: new Date().toISOString()
         });
         try {
-            await run('mongodump', [
+            const dumpArgs = [
                 `--uri=${sourceConfig.uri}`,
                 `--db=${sourceConfig.database}`,
                 `--archive=${temporaryPath}`,
                 '--gzip',
                 '--numParallelCollections=4'
-            ]);
+            ];
+            if (!/[?&]authSource=/i.test(sourceConfig.uri)) {
+                dumpArgs.push(`--authenticationDatabase=${sourceConfig.authDatabase || 'admin'}`);
+            }
+            await run('mongodump', dumpArgs);
             const stats = await fsp.stat(temporaryPath);
             const checksum = await sha256(temporaryPath);
             this.update(job.id, { phase: 'uploading', progress: 55, message: `Uploading ${filename}` });
@@ -122,12 +127,12 @@ class JobWorker {
             const policy = job.policy_id ? this.store.db.prepare('SELECT retention_days FROM policies WHERE id = ?').get(job.policy_id) : null;
             if (policy?.retention_days) {
                 await this.enforceRetention(source.id, destinationIds, policy.retention_days).catch((error) => {
-                    this.events.publish('retention.warning', { jobId: job.id, message: error.message });
+                    this.events.publish('retention.warning', { jobId: job.id, message: redactSensitive(error.message) });
                 });
             }
         } catch (error) {
             this.update(job.id, {
-                status: 'failed', phase: 'failed', message: 'Backup failed', error: error.message,
+                status: 'failed', phase: 'failed', message: 'Backup failed', error: redactSensitive(error.message),
                 finished_at: new Date().toISOString()
             });
         } finally {
@@ -172,6 +177,9 @@ class JobWorker {
                 `--nsFrom=${sourceConfig.database}.*`,
                 `--nsTo=${targetConfig.database}.*`
             ];
+            if (!/[?&]authSource=/i.test(targetConfig.uri)) {
+                args.push(`--authenticationDatabase=${targetConfig.authDatabase || 'admin'}`);
+            }
             if (options.dropExisting) args.push('--drop');
             await run('mongorestore', args);
             this.update(job.id, {
@@ -182,7 +190,7 @@ class JobWorker {
             });
         } catch (error) {
             this.update(job.id, {
-                status: 'failed', phase: 'failed', message: 'Restore failed', error: error.message,
+                status: 'failed', phase: 'failed', message: 'Restore failed', error: redactSensitive(error.message),
                 finished_at: new Date().toISOString()
             });
         } finally {
