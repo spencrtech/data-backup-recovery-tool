@@ -143,6 +143,7 @@ class Store {
                 type TEXT NOT NULL,
                 encrypted_config TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
+                deleted_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -153,6 +154,7 @@ class Store {
                 config TEXT NOT NULL,
                 encrypted_secret TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1,
+                deleted_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -220,8 +222,16 @@ class Store {
                 detail TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS job_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                level TEXT NOT NULL DEFAULT 'info',
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_artifacts_source ON artifacts(source_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_job_logs_job ON job_logs(job_id, id);
         `);
         this.ensureColumn('jobs', 'artifact_id', 'TEXT');
         this.ensureColumn('jobs', 'restore_target_id', 'TEXT');
@@ -232,6 +242,8 @@ class Store {
         this.ensureColumn('users', 'mfa_secret', 'TEXT');
         this.ensureColumn('sessions', 'mfa_verified', 'INTEGER NOT NULL DEFAULT 1');
         this.ensureColumn('sessions', 'pending_mfa_secret', 'TEXT');
+        this.ensureColumn('sources', 'deleted_at', 'TEXT');
+        this.ensureColumn('destinations', 'deleted_at', 'TEXT');
         for (const job of this.db.prepare('SELECT id, error FROM jobs WHERE error IS NOT NULL').all()) {
             const redacted = redactSensitive(job.error);
             if (redacted !== job.error) this.db.prepare('UPDATE jobs SET error = ? WHERE id = ?').run(redacted, job.id);

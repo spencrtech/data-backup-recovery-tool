@@ -258,8 +258,8 @@ async function startServer(options = {}) {
     });
 
     app.get('/api/overview', async (_req, res) => {
-        const sourceCount = store.db.prepare('SELECT COUNT(*) AS count FROM sources WHERE enabled = 1').get().count;
-        const destinationCount = store.db.prepare('SELECT COUNT(*) AS count FROM destinations WHERE enabled = 1').get().count;
+        const sourceCount = store.db.prepare('SELECT COUNT(*) AS count FROM sources WHERE enabled = 1 AND deleted_at IS NULL').get().count;
+        const destinationCount = store.db.prepare('SELECT COUNT(*) AS count FROM destinations WHERE enabled = 1 AND deleted_at IS NULL').get().count;
         const failedJobs = store.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status = 'failed' AND created_at >= datetime('now', '-24 hours')").get().count;
         const lastSuccess = store.db.prepare("SELECT * FROM jobs WHERE status = 'succeeded' ORDER BY finished_at DESC LIMIT 1").get() || null;
         const storage = await fsp.statfs(backupDir).catch(() => null);
@@ -274,7 +274,7 @@ async function startServer(options = {}) {
     });
 
     app.get('/api/sources', (_req, res) => {
-        res.json({ sources: store.db.prepare('SELECT * FROM sources ORDER BY created_at DESC').all().map(publicSource) });
+        res.json({ sources: store.db.prepare('SELECT * FROM sources WHERE deleted_at IS NULL ORDER BY created_at DESC').all().map(publicSource) });
     });
     app.post('/api/sources/test', async (req, res) => {
         const { uri, database, authDatabase = 'admin' } = req.body || {};
@@ -295,19 +295,19 @@ async function startServer(options = {}) {
         } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.post('/api/sources/:id/test', async (req, res) => {
-        const row = store.db.prepare('SELECT * FROM sources WHERE id = ?').get(req.params.id);
+        const row = store.db.prepare('SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Source not found' });
         try { res.json(await inspectMongo(store.decrypt(row.encrypted_config))); }
         catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.get('/api/sources/:id/metrics', async (req, res) => {
-        const row = store.db.prepare('SELECT * FROM sources WHERE id = ?').get(req.params.id);
+        const row = store.db.prepare('SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Source not found' });
         try { res.json(await inspectMongo(store.decrypt(row.encrypted_config))); }
         catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.patch('/api/sources/:id', async (req, res) => {
-        const row = store.db.prepare('SELECT * FROM sources WHERE id = ?').get(req.params.id);
+        const row = store.db.prepare('SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Source not found' });
         const current = store.decrypt(row.encrypted_config);
         const next = {
@@ -324,16 +324,20 @@ async function startServer(options = {}) {
         } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.delete('/api/sources/:id', (req, res) => {
-        const result = store.db.prepare('UPDATE sources SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-        if (!result.changes) return res.status(404).json({ error: 'Source not found' });
+        const row = store.db.prepare('SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+        if (!row) return res.status(404).json({ error: 'Source not found' });
+        const current = store.decrypt(row.encrypted_config);
+        store.db.prepare(`UPDATE sources SET enabled = 0, deleted_at = CURRENT_TIMESTAMP,
+            encrypted_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+            .run(store.encrypt({ database: current.database, authDatabase: current.authDatabase || 'admin' }), req.params.id);
         store.db.prepare('UPDATE policies SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE source_id = ?').run(req.params.id);
-        store.audit(req.user.username, 'source.disabled', 'source', req.params.id);
+        store.audit(req.user.username, 'source.deleted', 'source', req.params.id);
         scheduler.reload();
         res.json({ success: true });
     });
 
     app.get('/api/destinations', (_req, res) => {
-        res.json({ destinations: store.db.prepare('SELECT * FROM destinations ORDER BY created_at DESC').all().map(publicDestination) });
+        res.json({ destinations: store.db.prepare('SELECT * FROM destinations WHERE deleted_at IS NULL ORDER BY created_at DESC').all().map(publicDestination) });
     });
     app.post('/api/destinations', async (req, res) => {
         const { name, type, config = {}, secret = {} } = req.body || {};
@@ -349,13 +353,13 @@ async function startServer(options = {}) {
         } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.post('/api/destinations/:id/test', async (req, res) => {
-        const row = store.db.prepare('SELECT * FROM destinations WHERE id = ?').get(req.params.id);
+        const row = store.db.prepare('SELECT * FROM destinations WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Destination not found' });
         try { res.json(await testDestination(row, row.encrypted_secret ? store.decrypt(row.encrypted_secret) : {})); }
         catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.patch('/api/destinations/:id', async (req, res) => {
-        const row = store.db.prepare('SELECT * FROM destinations WHERE id = ?').get(req.params.id);
+        const row = store.db.prepare('SELECT * FROM destinations WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
         if (!row) return res.status(404).json({ error: 'Destination not found' });
         const config = req.body.config || JSON.parse(row.config);
         const secret = req.body.secret || (row.encrypted_secret ? store.decrypt(row.encrypted_secret) : {});
@@ -369,17 +373,25 @@ async function startServer(options = {}) {
         } catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
     app.delete('/api/destinations/:id', (req, res) => {
-        const result = store.db.prepare('UPDATE destinations SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-        if (!result.changes) return res.status(404).json({ error: 'Destination not found' });
+        const destination = store.db.prepare('SELECT id FROM destinations WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+        if (!destination) return res.status(404).json({ error: 'Destination not found' });
+        const artifactCount = store.db.prepare('SELECT COUNT(*) AS count FROM artifacts WHERE destination_id = ?').get(req.params.id).count;
+        if (artifactCount) {
+            store.db.prepare(`UPDATE destinations SET enabled = 0, deleted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(req.params.id);
+        } else {
+            store.db.prepare(`UPDATE destinations SET enabled = 0, deleted_at = CURRENT_TIMESTAMP,
+                config = '{}', encrypted_secret = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(req.params.id);
+        }
         const policies = store.db.prepare('SELECT * FROM policies WHERE enabled = 1').all();
         for (const policy of policies) {
             if (JSON.parse(policy.destination_ids).includes(req.params.id)) {
                 store.db.prepare('UPDATE policies SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(policy.id);
             }
         }
-        store.audit(req.user.username, 'destination.disabled', 'destination', req.params.id);
+        store.audit(req.user.username, 'destination.deleted', 'destination', req.params.id);
         scheduler.reload();
-        res.json({ success: true });
+        res.json({ success: true, retainedForRecovery: Boolean(artifactCount) });
     });
 
     app.get('/api/restore-targets', (_req, res) => {
@@ -437,8 +449,8 @@ async function startServer(options = {}) {
         if (!name || !sourceId || !Array.isArray(destinationIds) || !destinationIds.length || !cron.validate(schedule) || !validateTimezone(timezone)) {
             return res.status(400).json({ error: 'Name, source, destination, valid cron schedule, and timezone are required' });
         }
-        const source = store.db.prepare('SELECT id FROM sources WHERE id = ?').get(sourceId);
-        const destinations = destinationIds.map((id) => store.db.prepare('SELECT id FROM destinations WHERE id = ?').get(id)).filter(Boolean);
+        const source = store.db.prepare('SELECT id FROM sources WHERE id = ? AND deleted_at IS NULL').get(sourceId);
+        const destinations = destinationIds.map((id) => store.db.prepare('SELECT id FROM destinations WHERE id = ? AND deleted_at IS NULL').get(id)).filter(Boolean);
         if (!source || destinations.length !== destinationIds.length) return res.status(400).json({ error: 'Source or destination does not exist' });
         const id = slugId('pol');
         store.db.prepare(`
@@ -480,17 +492,31 @@ async function startServer(options = {}) {
             ORDER BY jobs.created_at DESC LIMIT ?
         `).all(limit).map((job) => ({ ...job, destination_ids: JSON.parse(job.destination_ids) })) });
     });
+    app.get('/api/jobs/:id', (req, res) => {
+        const job = store.db.prepare(`
+            SELECT jobs.*, sources.name AS source_name
+            FROM jobs LEFT JOIN sources ON sources.id = jobs.source_id
+            WHERE jobs.id = ?
+        `).get(req.params.id);
+        if (!job) return res.status(404).json({ error: 'Job not found' });
+        const destinationIds = JSON.parse(job.destination_ids);
+        const destinations = destinationIds.map((id) => store.db.prepare('SELECT id, name, type FROM destinations WHERE id = ?').get(id))
+            .filter(Boolean);
+        const logs = store.db.prepare('SELECT id, level, message, created_at FROM job_logs WHERE job_id = ? ORDER BY id ASC LIMIT 1000').all(job.id);
+        res.json({ job: { ...job, destination_ids: destinationIds, destinations }, logs });
+    });
     app.post('/api/jobs', (req, res) => {
         const { sourceId, destinationIds } = req.body || {};
         if (!sourceId || !Array.isArray(destinationIds) || !destinationIds.length) return res.status(400).json({ error: 'Source and at least one destination are required' });
-        const source = store.db.prepare('SELECT id FROM sources WHERE id = ? AND enabled = 1').get(sourceId);
-        const destinations = destinationIds.map((id) => store.db.prepare('SELECT id FROM destinations WHERE id = ? AND enabled = 1').get(id)).filter(Boolean);
+        const source = store.db.prepare('SELECT id FROM sources WHERE id = ? AND enabled = 1 AND deleted_at IS NULL').get(sourceId);
+        const destinations = destinationIds.map((id) => store.db.prepare('SELECT id FROM destinations WHERE id = ? AND enabled = 1 AND deleted_at IS NULL').get(id)).filter(Boolean);
         if (!source || destinations.length !== destinationIds.length) return res.status(400).json({ error: 'Source or destination is unavailable' });
         const id = slugId('job');
         store.db.prepare(`
             INSERT INTO jobs (id, type, source_id, destination_ids, trigger, status, phase, message)
             VALUES (?, 'backup', ?, ?, 'manual', 'queued', 'queued', 'Waiting for worker')
         `).run(id, sourceId, JSON.stringify(destinationIds));
+        store.db.prepare("INSERT INTO job_logs (job_id, level, message) VALUES (?, 'info', 'Backup queued')").run(id);
         store.audit(req.user.username, 'job.created', 'job', id, { sourceId, destinationIds });
         events.publish('job.created', { id });
         res.status(202).json({ id, status: 'queued' });
@@ -508,6 +534,7 @@ async function startServer(options = {}) {
             INSERT INTO jobs (id, type, source_id, destination_ids, artifact_id, restore_target_id, options, trigger, status, phase, message)
             VALUES (?, 'restore', ?, ?, ?, ?, ?, 'manual', 'queued', 'queued', 'Waiting for worker')
         `).run(id, artifact.source_id, JSON.stringify([artifact.destination_id]), artifact.id, target.id, JSON.stringify({ dropExisting: Boolean(dropExisting) }));
+        store.db.prepare("INSERT INTO job_logs (job_id, level, message) VALUES (?, 'info', 'Restore queued')").run(id);
         store.audit(req.user.username, 'restore.queued', 'job', id, { artifactId, targetId, dropExisting: Boolean(dropExisting) });
         events.publish('job.created', { id, type: 'restore' });
         res.status(202).json({ id, status: 'queued' });

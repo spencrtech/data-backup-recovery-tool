@@ -47,12 +47,27 @@ class JobWorker {
         clearInterval(this.timer);
     }
 
+    log(jobId, level, message) {
+        const lines = redactSensitive(message).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        for (const line of lines) {
+            this.store.db.prepare('INSERT INTO job_logs (job_id, level, message) VALUES (?, ?, ?)')
+                .run(jobId, level, line.slice(0, 4000));
+        }
+        if (lines.length) {
+            this.store.db.prepare(`DELETE FROM job_logs WHERE job_id = ? AND id NOT IN (
+                SELECT id FROM job_logs WHERE job_id = ? ORDER BY id DESC LIMIT 1000
+            )`).run(jobId, jobId);
+            this.events.publish('job.log', { id: jobId });
+        }
+    }
+
     update(jobId, fields) {
         const allowed = ['status', 'phase', 'progress', 'message', 'error', 'artifact_name', 'artifact_size', 'checksum', 'started_at', 'finished_at'];
         const entries = Object.entries(fields).filter(([key]) => allowed.includes(key));
         if (!entries.length) return;
         const sql = `UPDATE jobs SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`;
         this.store.db.prepare(sql).run(...entries.map(([, value]) => value), jobId);
+        if (fields.message) this.log(jobId, fields.status === 'failed' ? 'error' : 'info', fields.message);
         this.events.publish('job.updated', { id: jobId, ...fields });
     }
 
@@ -96,7 +111,7 @@ class JobWorker {
             if (!/[?&]authSource=/i.test(sourceConfig.uri)) {
                 dumpArgs.push(`--authenticationDatabase=${sourceConfig.authDatabase || 'admin'}`);
             }
-            await run('mongodump', dumpArgs);
+            await run('mongodump', dumpArgs, (output) => this.log(job.id, 'info', output));
             const stats = await fsp.stat(temporaryPath);
             const checksum = await sha256(temporaryPath);
             this.update(job.id, { phase: 'uploading', progress: 55, message: `Uploading ${filename}` });
@@ -131,6 +146,7 @@ class JobWorker {
                 });
             }
         } catch (error) {
+            this.log(job.id, 'error', error.message);
             this.update(job.id, {
                 status: 'failed', phase: 'failed', message: 'Backup failed', error: redactSensitive(error.message),
                 finished_at: new Date().toISOString()
@@ -181,7 +197,7 @@ class JobWorker {
                 args.push(`--authenticationDatabase=${targetConfig.authDatabase || 'admin'}`);
             }
             if (options.dropExisting) args.push('--drop');
-            await run('mongorestore', args);
+            await run('mongorestore', args, (output) => this.log(job.id, 'info', output));
             this.update(job.id, {
                 status: 'succeeded', phase: 'complete', progress: 100,
                 message: `Restore completed into ${target.database_name}`,
@@ -189,6 +205,7 @@ class JobWorker {
                 finished_at: new Date().toISOString()
             });
         } catch (error) {
+            this.log(job.id, 'error', error.message);
             this.update(job.id, {
                 status: 'failed', phase: 'failed', message: 'Restore failed', error: redactSensitive(error.message),
                 finished_at: new Date().toISOString()

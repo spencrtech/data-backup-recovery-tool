@@ -73,7 +73,32 @@ test('first-run setup creates a local workspace and authenticated session', asyn
         body: JSON.stringify({ artifactId, targetId, confirmation: 'recovery_db', dropExisting: true })
     });
     assert.equal(response.status, 202);
-    assert.equal(instance.store.db.prepare("SELECT type FROM jobs WHERE id = ?").get((await response.json()).id).type, 'restore');
+    const restoreJobId = (await response.json()).id;
+    assert.equal(instance.store.db.prepare("SELECT type FROM jobs WHERE id = ?").get(restoreJobId).type, 'restore');
+
+    response = await fetch(`${base}/api/jobs/${restoreJobId}`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const jobDetail = await response.json();
+    assert.equal(jobDetail.job.type, 'restore');
+    assert.equal(jobDetail.logs[0].message, 'Restore queued');
+
+    response = await fetch(`${base}/api/sources/${sourceId}`, {
+        method: 'DELETE', headers: { cookie, 'x-spencer-request': '1' }
+    });
+    assert.equal(response.status, 200);
+    response = await fetch(`${base}/api/sources`, { headers: { cookie } });
+    assert.equal((await response.json()).sources.some((source) => source.id === sourceId), false);
+    const deletedSource = instance.store.db.prepare('SELECT * FROM sources WHERE id = ?').get(sourceId);
+    assert.equal(instance.store.decrypt(deletedSource.encrypted_config).uri, undefined);
+
+    response = await fetch(`${base}/api/destinations/${destinations[0].id}`, {
+        method: 'DELETE', headers: { cookie, 'x-spencer-request': '1' }
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).retainedForRecovery, true);
+    response = await fetch(`${base}/api/destinations`, { headers: { cookie } });
+    assert.equal((await response.json()).destinations.length, 0);
+    assert.equal(instance.store.db.prepare('SELECT COUNT(*) AS count FROM artifacts WHERE destination_id = ?').get(destinations[0].id).count, 1);
 
     response = await fetch(`${base}/api/setup`, {
         method: 'POST', headers: { 'content-type': 'application/json' },

@@ -20,6 +20,7 @@ class Scheduler {
                     INSERT INTO jobs (id, type, source_id, destination_ids, policy_id, trigger, status, phase, message)
                     VALUES (?, 'backup', ?, ?, ?, 'scheduled', 'queued', 'queued', 'Waiting for worker')
                 `).run(id, policy.source_id, policy.destination_ids, policy.id);
+                this.store.db.prepare("INSERT INTO job_logs (job_id, level, message) VALUES (?, 'info', 'Scheduled backup queued')").run(id);
                 this.events.publish('job.created', { id, policyId: policy.id });
             }, { timezone: policy.timezone || 'UTC' });
             this.tasks.set(policy.id, task);

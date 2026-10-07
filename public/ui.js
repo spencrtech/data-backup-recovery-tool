@@ -1,5 +1,5 @@
 const state = {
-    page: 'overview', user: null, overview: null, sources: [], destinations: [], policies: [], jobs: [], artifacts: [], restoreTargets: [], security: null, auditEvents: []
+    page: 'overview', user: null, overview: null, sources: [], destinations: [], policies: [], jobs: [], artifacts: [], restoreTargets: [], security: null, auditEvents: [], activeJobId: null
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -219,8 +219,8 @@ function renderOverview() {
 
 function renderJobsTable(jobs) {
     if (!jobs.length) return emptyState('↗', 'No jobs yet', 'Run your first backup to see persistent progress and results here.');
-    return `<table class="data-table"><thead><tr><th>Source</th><th>Status</th><th>Progress</th><th>Started</th></tr></thead><tbody>${jobs.map((job) => `
-        <tr><td><div class="primary-cell">${job.type === 'restore' ? '↩ Restore · ' : ''}${escapeHtml(job.source_name || 'Unknown source')}</div><div class="secondary-cell">${escapeHtml(job.message || job.phase || '')}</div></td><td>${jobStatus(job)}</td><td><div class="job-progress"><b>${job.progress}%</b><div class="progress-track"><span style="width:${job.progress}%"></span></div></div></td><td>${relativeTime(job.started_at || job.created_at)}</td></tr>
+    return `<table class="data-table"><thead><tr><th>Source</th><th>Status</th><th>Progress</th><th>Started</th><th></th></tr></thead><tbody>${jobs.map((job) => `
+        <tr><td><div class="primary-cell">${job.type === 'restore' ? '↩ Restore · ' : ''}${escapeHtml(job.source_name || 'Deleted source')}</div><div class="secondary-cell">${escapeHtml(job.message || job.phase || '')}</div></td><td>${jobStatus(job)}</td><td><div class="job-progress"><b>${job.progress}%</b><div class="progress-track"><span style="width:${job.progress}%"></span></div></div></td><td>${relativeTime(job.started_at || job.created_at)}</td><td><button class="icon-button" data-view-job="${job.id}">View</button></td></tr>
     `).join('')}</tbody></table>`;
 }
 
@@ -231,7 +231,7 @@ function renderActivity(artifacts) {
 
 function renderSources() {
     return `<div class="section-heading"><div><h2>MongoDB sources</h2><p>Credentials are encrypted locally and never returned to the browser.</p></div></div>
-        ${state.sources.length ? `<div class="source-grid">${state.sources.map((source) => `<article class="resource-card"><div class="resource-icon">M</div><h3>${escapeHtml(source.name)}</h3><p>MongoDB source · Added ${relativeTime(source.createdAt)}</p><div class="resource-footer"><span class="status ${source.enabled ? 'healthy' : 'failed'}">${source.enabled ? 'Enabled' : 'Disabled'}</span><div class="row-actions"><button class="icon-button" data-test-source="${source.id}">Test</button><button class="icon-button" data-toggle-source="${source.id}" data-enabled="${source.enabled}">${source.enabled ? 'Disable' : 'Enable'}</button></div></div></article>`).join('')}</div>` : emptyState('◉', 'No sources connected', 'Add a MongoDB connection to start measuring and protecting your data.', '<button class="button primary" data-action="add-source">Add MongoDB source</button>')}`;
+        ${state.sources.length ? `<div class="source-grid">${state.sources.map((source) => `<article class="resource-card"><div class="resource-icon">M</div><h3>${escapeHtml(source.name)}</h3><p>MongoDB source · Added ${relativeTime(source.createdAt)}</p><div class="resource-footer"><span class="status ${source.enabled ? 'healthy' : 'failed'}">${source.enabled ? 'Enabled' : 'Disabled'}</span><div class="row-actions"><button class="icon-button" data-test-source="${source.id}">Test</button><button class="icon-button" data-toggle-source="${source.id}" data-enabled="${source.enabled}">${source.enabled ? 'Disable' : 'Enable'}</button><button class="icon-button danger-text" data-delete-source="${source.id}">Delete</button></div></div></article>`).join('')}</div>` : emptyState('◉', 'No sources connected', 'Add a MongoDB connection to start measuring and protecting your data.', '<button class="button primary" data-action="add-source">Add MongoDB source</button>')}`;
 }
 
 function destinationDetail(item) {
@@ -242,7 +242,7 @@ function destinationDetail(item) {
 
 function renderDestinations() {
     return `<div class="section-heading"><div><h2>Storage destinations</h2><p>Local disk, private Firebase Storage, and S3-compatible object storage.</p></div></div>
-        <div class="destination-grid">${state.destinations.map((item) => `<article class="resource-card"><div class="resource-icon">${item.type === 'local' ? '▱' : item.type === 'firebase' ? 'F' : 'S3'}</div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(destinationDetail(item))}</p><div class="resource-footer"><span class="status ${item.enabled ? 'healthy' : 'failed'}">${item.enabled ? escapeHtml(item.type) : 'Disabled'}</span><div class="row-actions"><button class="icon-button" data-test-destination="${item.id}">Test</button><button class="icon-button" data-toggle-destination="${item.id}" data-enabled="${item.enabled}">${item.enabled ? 'Disable' : 'Enable'}</button></div></div></article>`).join('')}
+        <div class="destination-grid">${state.destinations.map((item) => `<article class="resource-card"><div class="resource-icon">${item.type === 'local' ? '▱' : item.type === 'firebase' ? 'F' : 'S3'}</div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(destinationDetail(item))}</p><div class="resource-footer"><span class="status ${item.enabled ? 'healthy' : 'failed'}">${item.enabled ? escapeHtml(item.type) : 'Disabled'}</span><div class="row-actions"><button class="icon-button" data-test-destination="${item.id}">Test</button><button class="icon-button" data-toggle-destination="${item.id}" data-enabled="${item.enabled}">${item.enabled ? 'Disable' : 'Enable'}</button><button class="icon-button danger-text" data-delete-destination="${item.id}">Delete</button></div></div></article>`).join('')}
         <button class="resource-card" data-action="add-destination" style="border-style:dashed;text-align:left"><div class="resource-icon">＋</div><h3>Add destination</h3><p>Connect Firebase or S3-compatible storage.</p></button></div>`;
 }
 
@@ -296,6 +296,9 @@ function bindPageActions() {
     $$('[data-toggle-target]').forEach((el) => el.onclick = () => toggleResource(`/api/restore-targets/${el.dataset.toggleTarget}`, el.dataset.enabled !== 'true', 'Restore target'));
     $$('[data-delete-policy]').forEach((el) => el.onclick = () => deletePolicy(el.dataset.deletePolicy));
     $$('[data-restore-artifact]').forEach((el) => el.onclick = () => openRestoreModal(el.dataset.restoreArtifact));
+    $$('[data-view-job]').forEach((el) => el.onclick = () => openJobDetails(el.dataset.viewJob));
+    $$('[data-delete-source]').forEach((el) => el.onclick = () => deleteResource(`/api/sources/${el.dataset.deleteSource}`, 'source'));
+    $$('[data-delete-destination]').forEach((el) => el.onclick = () => deleteResource(`/api/destinations/${el.dataset.deleteDestination}`, 'destination'));
     $$('[data-action="setup-mfa"]').forEach((el) => el.onclick = openMfaSetupModal);
     $$('[data-action="disable-mfa"]').forEach((el) => el.onclick = openMfaDisableModal);
 }
@@ -334,6 +337,42 @@ async function deletePolicy(id) {
     catch (error) { toast(error.message, 'error'); }
 }
 
+async function deleteResource(url, label) {
+    const warning = label === 'destination'
+        ? 'Delete this destination? It will disappear from configuration, but Spencer will retain the encrypted connection internally when existing recovery points still depend on it.'
+        : 'Delete this source? Its credentials will be erased, linked policies will stop, and historical jobs will remain visible.';
+    if (!window.confirm(warning)) return;
+    try {
+        await api(url, { method: 'DELETE' });
+        toast(`${label[0].toUpperCase()}${label.slice(1)} deleted`);
+        await navigate(state.page);
+    } catch (error) { toast(error.message, 'error'); }
+}
+
+function renderJobDetails({ job, logs }) {
+    const destinations = job.destinations?.map((item) => item.name).join(', ') || 'Unavailable';
+    const logLines = logs.length ? logs.map((entry) => `<div class="job-log-line ${escapeHtml(entry.level)}"><time>${escapeHtml(new Date(entry.created_at).toLocaleTimeString())}</time><b>${escapeHtml(entry.level)}</b><span>${escapeHtml(entry.message)}</span></div>`).join('') : '<div class="job-log-empty">Waiting for job output…</div>';
+    $('#modal-content').innerHTML = `<p class="eyebrow dark">RUN DETAILS · ${escapeHtml(job.type.toUpperCase())}</p><div class="job-detail-title"><div><h2>${escapeHtml(job.source_name || 'Deleted source')}</h2><p>${escapeHtml(job.id)}</p></div>${jobStatus(job)}</div>
+        <div class="job-detail-grid"><div><small>Trigger</small><strong>${escapeHtml(job.trigger)}</strong></div><div><small>Phase</small><strong>${escapeHtml(job.phase || '—')}</strong></div><div><small>Destination</small><strong>${escapeHtml(destinations)}</strong></div><div><small>Started</small><strong>${job.started_at ? new Date(job.started_at).toLocaleString() : 'Not started'}</strong></div><div><small>Finished</small><strong>${job.finished_at ? new Date(job.finished_at).toLocaleString() : 'In progress'}</strong></div><div><small>Artifact</small><strong>${job.artifact_size ? formatBytes(job.artifact_size) : '—'}</strong></div></div>
+        <div class="job-detail-progress"><div><span>${escapeHtml(job.message || job.phase || 'Waiting')}</span><b>${Number(job.progress || 0)}%</b></div><div class="progress-track"><span style="width:${Number(job.progress || 0)}%"></span></div></div>
+        ${job.error ? `<div class="job-error"><strong>Failure detail</strong><p>${escapeHtml(job.error)}</p></div>` : ''}
+        <div class="job-log-heading"><div><h3>Execution log</h3><p>Updates automatically while this window is open.</p></div><span class="live-pill"><i></i>Live</span></div><div class="job-log" id="job-log-output">${logLines}</div>`;
+    const output = $('#job-log-output');
+    if (output) output.scrollTop = output.scrollHeight;
+}
+
+async function refreshJobDetails(id) {
+    if (state.activeJobId !== id || $('#modal').classList.contains('hidden')) return;
+    try { renderJobDetails(await api(`/api/jobs/${id}`)); }
+    catch (error) { toast(error.message, 'error'); }
+}
+
+async function openJobDetails(id) {
+    state.activeJobId = id;
+    showModal('<p class="eyebrow dark">RUN DETAILS</p><h2>Loading execution log…</h2>');
+    await refreshJobDetails(id);
+}
+
 async function testResource(url, button) {
     const original = button.textContent;
     button.disabled = true; button.textContent = 'Testing…';
@@ -351,7 +390,7 @@ function showModal(html) {
     $('#modal-content').innerHTML = html;
     $('#modal').classList.remove('hidden');
 }
-function closeModal() { $('#modal').classList.add('hidden'); $('#modal-content').innerHTML = ''; }
+function closeModal() { state.activeJobId = null; $('#modal').classList.add('hidden'); $('#modal-content').innerHTML = ''; }
 $$('[data-close-modal]').forEach((element) => element.addEventListener('click', closeModal));
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
 
@@ -463,10 +502,16 @@ function connectEvents() {
     if (window.spencerEvents) window.spencerEvents.close();
     const source = new EventSource('/api/events');
     window.spencerEvents = source;
-    source.addEventListener('job.updated', async () => {
+    source.addEventListener('job.updated', async (event) => {
+        const payload = JSON.parse(event.data || '{}').payload || {};
+        if (state.activeJobId === payload.id) await refreshJobDetails(payload.id);
         if (['overview', 'jobs', 'storage'].includes(state.page)) {
             await loadData(); render();
         }
+    });
+    source.addEventListener('job.log', async (event) => {
+        const payload = JSON.parse(event.data || '{}').payload || {};
+        if (state.activeJobId === payload.id) await refreshJobDetails(payload.id);
     });
     source.onerror = () => $('#live-indicator').classList.add('offline');
     source.onopen = () => $('#live-indicator').classList.remove('offline');
