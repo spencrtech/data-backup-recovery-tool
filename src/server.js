@@ -57,9 +57,11 @@ function slugId(prefix) {
 }
 
 async function inspectMongo(config) {
+    const connectTimeoutMS = Math.max(5000, Number(process.env.MONGO_CONNECT_TIMEOUT_MS) || 15000);
+    const serverSelectionTimeoutMS = Math.max(connectTimeoutMS, Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS) || 20000);
     const client = new MongoClient(config.uri, {
-        serverSelectionTimeoutMS: 7000,
-        connectTimeoutMS: 7000,
+        serverSelectionTimeoutMS,
+        connectTimeoutMS,
         ...(config.authDatabase && !/[?&]authSource=/i.test(config.uri) ? { authSource: config.authDatabase } : {})
     });
     try {

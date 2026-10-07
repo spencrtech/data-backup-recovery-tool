@@ -46,6 +46,8 @@ Optional environment variables:
 | `HOST` | `0.0.0.0` | Bind address |
 | `DATA_DIR` | `./data` | SQLite database, encryption key, and work files |
 | `BACKUP_DIR` | `$DATA_DIR/backups` | Default local backup directory |
+| `MONGO_CONNECT_TIMEOUT_MS` | `15000` | MongoDB socket and TLS connection timeout |
+| `MONGO_SERVER_SELECTION_TIMEOUT_MS` | `20000` | Total MongoDB cluster discovery timeout |
 
 Database credentials, Firebase service accounts, S3 access keys, schedules, and application settings are configured in the UI—not environment variables.
 
