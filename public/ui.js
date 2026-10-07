@@ -395,28 +395,54 @@ $$('[data-close-modal]').forEach((element) => element.addEventListener('click', 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
 
 function openSourceModal() {
-    showModal(`<p class="eyebrow dark">NEW SOURCE</p><h2>Connect MongoDB</h2><p>Paste one connection URI. Spencer will connect, discover the databases you can access, and infer authentication settings.</p><form id="source-form"><label>Display name<input name="name" required placeholder="Customer API production"></label><label>MongoDB connection URI<input name="uri" type="password" required placeholder="mongodb+srv://user:password@cluster…" autocomplete="off"></label><div class="connection-discovery"><button class="button secondary" id="discover-databases" type="button">Discover databases</button><small id="discovery-status">Database access will be checked before anything is saved.</small></div><div class="field-grid"><label>Database name<input name="database" list="mongo-database-options" required placeholder="Discover or enter a database"><datalist id="mongo-database-options"></datalist></label><label>Authentication database<input name="authDatabase" value="admin" required><small>Detected from authSource; otherwise admin</small></label></div><div class="modal-actions"><button type="button" class="button secondary" data-close-modal>Cancel</button><button class="button primary" type="submit">Test and save</button></div></form>`);
+    showModal(`<p class="eyebrow dark">NEW SOURCE</p><h2>Connect MongoDB</h2><p>Paste your connection URI. Spencer will verify it and find the databases you can access automatically.</p><form id="source-form"><label>Display name<input name="name" required placeholder="Customer API production"></label><label>MongoDB connection URI<input name="uri" type="password" required placeholder="mongodb+srv://user:password@cluster…" autocomplete="off"></label><div class="connection-status idle" id="discovery-status">Waiting for a connection URI</div><div id="source-database-field"><label>Database<select disabled><option>Database will be detected automatically</option></select></label></div><details class="advanced-settings"><summary>Advanced connection settings</summary><div><label>Authentication database<input name="authDatabase" value="admin" required><small>Detected from authSource; otherwise admin</small></label></div></details><div class="modal-actions"><button type="button" class="button secondary" data-close-modal>Cancel</button><button class="button primary" type="submit">Test and save</button></div></form>`);
     $('[data-close-modal]', $('#modal-content')).onclick = closeModal;
     const form = $('#source-form');
+    const databaseField = $('#source-database-field');
+    const status = $('#discovery-status');
+    let discoverySequence = 0;
+    let discoveryTimer;
+    let lastDiscoveryUri = '';
+    const renderDatabaseField = (databases = [], selected = '') => {
+        databaseField.innerHTML = databases.length
+            ? `<label>Database<div class="select-shell"><select name="database" required><option value="" disabled ${selected ? '' : 'selected'}>Choose a database</option>${databases.map((name) => `<option value="${escapeHtml(name)}" ${name === selected ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div><small>Choose the database this source should protect</small></label>`
+            : '<label>Database name<input name="database" required placeholder="Enter the database name"><small>Automatic discovery is unavailable for this database user</small></label>';
+    };
     const discover = async () => {
-        const button = $('#discover-databases');
-        const status = $('#discovery-status');
         const uri = form.elements.uri.value.trim();
-        if (!uri) return toast('Paste the MongoDB connection URI first.', 'error');
-        button.disabled = true; button.textContent = 'Connecting…'; status.textContent = 'Checking cluster access and reading database names…';
+        if (!uri) {
+            discoverySequence += 1;
+            lastDiscoveryUri = '';
+            status.className = 'connection-status idle'; status.textContent = 'Waiting for a connection URI';
+            databaseField.innerHTML = '<label>Database<select disabled><option>Database will be detected automatically</option></select></label>';
+            return;
+        }
+        if (uri === lastDiscoveryUri && !status.classList.contains('error')) return;
+        lastDiscoveryUri = uri;
+        const sequence = ++discoverySequence;
+        status.className = 'connection-status loading'; status.textContent = 'Connecting securely and finding databases…';
+        databaseField.innerHTML = '<label>Database<select disabled><option>Checking database access…</option></select></label>';
         try {
             const result = await api('/api/sources/discover', { method: 'POST', body: { uri, authDatabase: form.elements.authDatabase.value } });
-            $('#mongo-database-options').innerHTML = result.databases.map((name) => `<option value="${escapeHtml(name)}"></option>`).join('');
-            if (result.database) form.elements.database.value = result.database;
+            if (sequence !== discoverySequence) return;
             form.elements.authDatabase.value = result.authDatabase || 'admin';
+            renderDatabaseField(result.databases, result.database);
+            status.className = `connection-status ${result.databases.length ? 'success' : 'manual'}`;
             status.textContent = result.databases.length
-                ? `${result.databases.length} database${result.databases.length === 1 ? '' : 's'} found. Select one or enter its name.`
-                : 'Connected successfully. Enter the database name because this user cannot list databases.';
-        } catch (error) { status.textContent = error.message; toast(error.message, 'error'); }
-        finally { button.disabled = false; button.textContent = 'Discover databases'; }
+                ? `Connected · ${result.databases.length} database${result.databases.length === 1 ? '' : 's'} available`
+                : 'Connected · enter the database name below';
+        } catch (error) {
+            if (sequence !== discoverySequence) return;
+            renderDatabaseField();
+            status.className = 'connection-status error'; status.textContent = error.message;
+        }
     };
-    $('#discover-databases').onclick = discover;
-    form.elements.uri.onchange = discover;
+    form.elements.uri.oninput = () => {
+        discoverySequence += 1;
+        clearTimeout(discoveryTimer);
+        discoveryTimer = setTimeout(discover, 650);
+    };
+    form.elements.uri.onchange = () => { clearTimeout(discoveryTimer); discover(); };
     form.onsubmit = async (event) => submitModal(event, '/api/sources', 'MongoDB source connected');
 }
 

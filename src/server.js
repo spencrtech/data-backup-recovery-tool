@@ -2,6 +2,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const http = require('http');
 const express = require('express');
 const cron = require('node-cron');
 const { MongoClient } = require('mongodb');
@@ -619,18 +620,19 @@ async function startServer(options = {}) {
     worker.start();
     scheduler.reload();
     return new Promise((resolve, reject) => {
-        const server = app.listen(port, host, () => {
+        const server = http.createServer(app);
+        server.once('error', (error) => {
+            worker.stop();
+            store.close();
+            reject(error);
+        });
+        server.listen(port, host, () => {
             const interfaces = require('os').networkInterfaces();
             const addresses = Object.values(interfaces).flat().filter((item) => item && item.family === 'IPv4' && !item.internal).map((item) => item.address);
             const boundPort = server.address().port;
             console.log(`Spencer Data Backup is running at http://localhost:${boundPort}`);
             for (const address of addresses) console.log(`Network: http://${address}:${boundPort}`);
             resolve({ app, server, store, worker, scheduler });
-        });
-        server.on('error', (error) => {
-            worker.stop();
-            store.close();
-            reject(error);
         });
     });
 }
