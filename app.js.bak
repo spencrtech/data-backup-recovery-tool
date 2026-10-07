@@ -1,0 +1,1025 @@
+const express = require('express');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs').promises;
+const cron = require('node-cron');
+const winston = require('winston');
+const { MongoClient } = require('mongodb');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Configuration
+let databases = [];
+const mongoClients = {}; // Store clients per database
+let trackingDb = null;
+
+// // Configure logging
+// const logger = winston.createLogger({
+//     level: 'info',
+//     format: winston.format.combine(
+//         winston.format.timestamp(),
+//         winston.format.json()
+//     ),
+//     transports: [
+//         new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+//         new winston.transports.File({ filename: 'logs/combined.log' }),
+//         new winston.transports.Console({
+//             format: winston.format.simple()
+//         })
+//     ]
+// });
+
+// // Configuration
+// const config = {
+//     prodUri: process.env.PROD_MONGO_URI || 'mongodb+srv://user:pass@cluster.mongodb.net/db',
+//     testUri: process.env.TEST_MONGO_URI || 'mongodb+srv://user:pass@test-cluster.mongodb.net/db',
+//     backupDir: process.env.BACKUP_DIR || path.join(__dirname, 'backups'),
+//     dbName: process.env.DB_NAME || 'mydb',
+//     retentionDays: parseInt(process.env.RETENTION_DAYS || '30'),
+//     backupSchedule: process.env.BACKUP_SCHEDULE || '0 2 * * *', // Daily at 2 AM
+//     restoreSchedule: process.env.RESTORE_SCHEDULE || '' // Disabled by default
+// };
+
+// // State management
+// const state = {
+//     isRunning: false,
+//     lastBackup: null,
+//     backups: [],
+//     jobs: {}
+// };
+
+// // Middleware
+// app.use(express.json());
+// app.use(express.static('public'));
+
+// // Initialize
+// async function initialize() {
+//     try {
+//         await fs.mkdir(config.backupDir, { recursive: true });
+//         await fs.mkdir('logs', { recursive: true });
+//         logger.info('Application initialized');
+//         await loadBackups();
+//         scheduleJobs();
+//     } catch (err) {
+//         logger.error('Initialization error:', err);
+//         process.exit(1);
+//     }
+// }
+
+// // Load available backups
+// async function loadBackups() {
+//     try {
+//         const files = await fs.readdir(config.backupDir);
+//         state.backups = files
+//             .filter(f => f.startsWith('backup_') && f.endsWith('.tar.gz'))
+//             .sort()
+//             .reverse()
+//             .map(f => ({
+//                 name: f,
+//                 path: path.join(config.backupDir, f),
+//                 created: f.match(/backup_(\d{8}_\d{6})/)?.[1]
+//             }));
+//     } catch (err) {
+//         logger.error('Error loading backups:', err);
+//     }
+// }
+
+// // Execute shell command
+// function executeCommand(cmd, args, options = {}) {
+//     return new Promise((resolve, reject) => {
+//         const proc = spawn(cmd, args, {
+//             stdio: ['pipe', 'pipe', 'pipe'],
+//             ...options
+//         });
+
+//         let stdout = '';
+//         let stderr = '';
+
+//         proc.stdout.on('data', (data) => {
+//             stdout += data.toString();
+//         });
+
+//         proc.stderr.on('data', (data) => {
+//             stderr += data.toString();
+//         });
+
+//         proc.on('close', (code) => {
+//             if (code === 0) {
+//                 resolve(stdout);
+//             } else {
+//                 reject(new Error(`Command failed: ${stderr}`));
+//             }
+//         });
+
+//         proc.on('error', (err) => {
+//             reject(err);
+//         });
+//     });
+// }
+
+// // Validate MongoDB connection with timeout
+// async function validateConnection(uri, name) {
+//     return new Promise((resolve) => {
+//         const timeout = setTimeout(() => {
+//             logger.warn(`Connection timeout to ${name}`);
+//             resolve(false);
+//         }, 5000);
+
+//         executeCommand('mongosh', [uri, '--eval', "db.adminCommand('ping')"])
+//             .then(() => {
+//                 clearTimeout(timeout);
+//                 logger.info(`✓ Connected to ${name}`);
+//                 resolve(true);
+//             })
+//             .catch((err) => {
+//                 clearTimeout(timeout);
+//                 logger.error(`✗ Connection failed to ${name}: ${err.message}`);
+//                 resolve(false);
+//             });
+//     });
+// }
+
+// // Backup production database
+// async function backupProduction() {
+//     if (state.isRunning) {
+//         throw new Error('Another operation is already running');
+//     }
+
+//     state.isRunning = true;
+//     const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
+//     const backupPath = path.join(config.backupDir, `backup_${timestamp}`);
+
+//     try {
+//         logger.info('Starting production backup...');
+
+//         if (!await validateConnection(config.prodUri, 'Production')) {
+//             throw new Error('Cannot connect to production database');
+//         }
+
+//         await fs.mkdir(backupPath, { recursive: true });
+
+//         logger.info(`Dumping to ${backupPath}`);
+//         await executeCommand('mongodump', [
+//             `--uri=${config.prodUri}`,
+//             `--db=${config.dbName}`,
+//             `--out=${backupPath}`,
+//             '--gzip',
+//             '--numParallelCollections=4'
+//         ]);
+
+//         logger.info('Creating archive...');
+//         const archivePath = `${backupPath}.tar.gz`;
+//         await executeCommand('tar', [
+//             '-czf',
+//             archivePath,
+//             '-C',
+//             config.backupDir,
+//             path.basename(backupPath)
+//         ]);
+
+//         await fs.rm(backupPath, { recursive: true });
+
+//         state.lastBackup = archivePath;
+//         await loadBackups();
+//         logger.info(`Backup completed: ${archivePath}`);
+
+//         await cleanupOldBackups();
+
+//         return { success: true, path: archivePath };
+//     } catch (err) {
+//         logger.error('Backup failed:', err);
+//         throw err;
+//     } finally {
+//         state.isRunning = false;
+//     }
+// }
+
+// // Restore to test database
+// async function restoreToTest(backupFile, dropDb = false) {
+//     if (state.isRunning) {
+//         throw new Error('Another operation is already running');
+//     }
+
+//     state.isRunning = true;
+
+//     try {
+//         logger.info(`Starting restore from ${backupFile}`);
+
+//         if (!await validateConnection(config.testUri, 'Test')) {
+//             throw new Error('Cannot connect to test database');
+//         }
+
+//         if (dropDb) {
+//             logger.warn('Dropping test database');
+//             try {
+//                 await executeCommand('mongosh', [
+//                     config.testUri,
+//                     '--eval',
+//                     'db.dropDatabase();'
+//                 ]);
+//             } catch (err) {
+//                 logger.warn('Drop failed (may not exist):', err.message);
+//             }
+//         }
+
+//         logger.info('Restoring database...');
+//         const tempDir = path.join(config.backupDir, `temp_${Date.now()}`);
+//         await fs.mkdir(tempDir, { recursive: true });
+
+//         await executeCommand('tar', [
+//             '-xzf',
+//             backupFile,
+//             '-C',
+//             tempDir
+//         ]);
+
+//         const dumpDir = path.join(tempDir, `backup_${path.basename(backupFile, '.tar.gz').slice(7)}`);
+
+//         await executeCommand('mongorestore', [
+//             `--uri=${config.testUri}`,
+//             `--db=${config.dbName}`,
+//             path.join(dumpDir, config.dbName)
+//         ]);
+
+//         await fs.rm(tempDir, { recursive: true });
+
+//         logger.info('Restore completed successfully');
+//         return { success: true, message: 'Restore completed' };
+//     } catch (err) {
+//         logger.error('Restore failed:', err);
+//         throw err;
+//     } finally {
+//         state.isRunning = false;
+//     }
+// }
+
+// // Cleanup old backups
+// async function cleanupOldBackups() {
+//     try {
+//         const cutoffDate = new Date(Date.now() - config.retentionDays * 24 * 60 * 60 * 1000);
+//         const files = await fs.readdir(config.backupDir);
+
+//         for (const file of files) {
+//             if (file.startsWith('backup_') && file.endsWith('.tar.gz')) {
+//                 const filePath = path.join(config.backupDir, file);
+//                 const stat = await fs.stat(filePath);
+//                 if (stat.mtime < cutoffDate) {
+//                     await fs.rm(filePath);
+//                     logger.info(`Deleted old backup: ${file}`);
+//                 }
+//             }
+//         }
+//     } catch (err) {
+//         logger.error('Cleanup error:', err);
+//     }
+// }
+
+// // Schedule cron jobs
+// function scheduleJobs() {
+//     if (config.backupSchedule) {
+//         state.jobs.backup = cron.schedule(config.backupSchedule, async () => {
+//             logger.info('Running scheduled backup');
+//             try {
+//                 await backupProduction();
+//             } catch (err) {
+//                 logger.error('Scheduled backup failed:', err);
+//             }
+//         });
+//         logger.info(`Backup scheduled: ${config.backupSchedule}`);
+//     }
+
+//     if (config.restoreSchedule) {
+//         state.jobs.restore = cron.schedule(config.restoreSchedule, async () => {
+//             logger.info('Running scheduled restore');
+//             try {
+//                 const latest = state.backups[0];
+//                 if (latest) {
+//                     await restoreToTest(latest.path, true);
+//                 }
+//             } catch (err) {
+//                 logger.error('Scheduled restore failed:', err);
+//             }
+//         });
+//         logger.info(`Restore scheduled: ${config.restoreSchedule}`);
+//     }
+// }
+
+// // Cache connection status with TTL
+// const connectionCache = {
+//     production: { status: false, lastCheck: 0, ttl: 10000 },
+//     test: { status: false, lastCheck: 0, ttl: 10000 }
+// };
+
+// async function getConnectionStatus(type, uri) {
+//     const cache = connectionCache[type];
+//     const now = Date.now();
+
+//     // Return cached result if still valid
+//     if (now - cache.lastCheck < cache.ttl) {
+//         return cache.status;
+//     }
+
+//     // Check connection asynchronously and update cache
+//     validateConnection(uri, type === 'production' ? 'Production' : 'Test')
+//         .then(result => {
+//             connectionCache[type].status = result;
+//             connectionCache[type].lastCheck = now;
+//         });
+
+//     // Return last known status while checking
+//     return cache.status;
+// }
+
+// // Routes
+// app.get('/api/status', async (req, res) => {
+//     // Get cached status immediately, update asynchronously
+//     const prodConnected = await getConnectionStatus('production', config.prodUri);
+//     const testConnected = await getConnectionStatus('test', config.testUri);
+
+//     res.json({
+//         isRunning: state.isRunning,
+//         lastBackup: state.lastBackup,
+//         backups: state.backups,
+//         connections: {
+//             production: prodConnected,
+//             test: testConnected
+//         },
+//         config: {
+//             dbName: config.dbName,
+//             backupSchedule: config.backupSchedule,
+//             restoreSchedule: config.restoreSchedule
+//         }
+//     });
+// });
+
+// app.post('/api/backup', async (req, res) => {
+//     try {
+//         const result = await backupProduction();
+//         res.json(result);
+//     } catch (err) {
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+
+// app.post('/api/restore', async (req, res) => {
+//     try {
+//         const { backupFile, dropDb } = req.body;
+//         const backup = state.backups.find(b => b.path === backupFile);
+//         if (!backup) {
+//             return res.status(404).json({ error: 'Backup not found' });
+//         }
+//         const result = await restoreToTest(backupFile, dropDb || false);
+//         res.json(result);
+//     } catch (err) {
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+
+// app.post('/api/restore-latest', async (req, res) => {
+//     try {
+//         const { dropDb } = req.body;
+//         if (!state.backups.length) {
+//             return res.status(404).json({ error: 'No backups available' });
+//         }
+//         const result = await restoreToTest(state.backups[0].path, dropDb || false);
+//         res.json(result);
+//     } catch (err) {
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+
+// app.get('/api/logs', async (req, res) => {
+//     try {
+//         const logFile = process.env.LOG_FILE || 'logs/combined.log';
+//         const logs = await fs.readFile(logFile, 'utf-8');
+//         res.json({ logs: logs.split('\n').slice(-100) });
+//     } catch (err) {
+//         res.json({ logs: ['No logs available'] });
+//     }
+// });
+
+// app.listen(PORT, () => {
+//     logger.info(`MongoDB Backup App listening on port ${PORT}`);
+//     initialize();
+// });
+
+
+
+const express = require('express');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs').promises;
+const cron = require('node-cron');
+const winston = require('winston');
+const { MongoClient } = require('mongodb');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// MongoDB clients
+let trackingDb = null;
+let prodClient = null;
+let testClient = null;
+
+// Configure logging
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+        new winston.transports.File({ filename: 'logs/combined.log' }),
+        new winston.transports.Console({
+            format: winston.format.simple()
+        })
+    ]
+});
+
+// Configuration
+const config = {
+    prodUri: process.env.PROD_MONGO_URI || 'mongodb+srv://user:pass@cluster.mongodb.net/db',
+    testUri: process.env.TEST_MONGO_URI || 'mongodb+srv://user:pass@test-cluster.mongodb.net/db',
+    trackingUri: process.env.TRACKING_MONGO_URI || 'mongodb+srv://user:pass@tracking-cluster.mongodb.net/backup_tracker',
+    backupDir: process.env.BACKUP_DIR || path.join(__dirname, 'backups'),
+    backupDbName: process.env.BACKUP_DB_NAME || 'sylogate',
+    restoreDbName: process.env.RESTORE_DB_NAME || 'sylogate-restore',
+    retentionDays: parseInt(process.env.RETENTION_DAYS || '30'),
+    backupSchedule: process.env.BACKUP_SCHEDULE || '0 2 * * *',
+    restoreSchedule: process.env.RESTORE_SCHEDULE || '',
+    mongoMaxPoolSize: parseInt(process.env.MONGO_MAX_POOL_SIZE || '10'),
+    mongoMinPoolSize: parseInt(process.env.MONGO_MIN_POOL_SIZE || '5'),
+    mongoMaxIdleTime: parseInt(process.env.MONGO_MAX_IDLE_TIME || '30000'),
+    connectionCheckInterval: parseInt(process.env.CONNECTION_CHECK_INTERVAL || '3600') * 1000
+};
+
+// State management
+const state = {
+    isRunning: false,
+    lastBackup: null,
+    backups: [],
+    jobs: {}
+};
+
+// Middleware
+app.use(express.json());
+app.use(express.static('public'));
+
+// Initialize all database connections with pooling
+async function initializeConnections() {
+    const mongoOptions = {
+        maxPoolSize: config.mongoMaxPoolSize,
+        minPoolSize: config.mongoMinPoolSize,
+        maxIdleTimeMS: config.mongoMaxIdleTime,
+        serverSelectionTimeoutMS: 5000
+    };
+
+    // Connect tracking database
+    try {
+        const trackingClient = new MongoClient(config.trackingUri, mongoOptions);
+        await trackingClient.connect();
+        trackingDb = trackingClient.db();
+        
+        // Create collections with indexes
+        const backupLogsCollection = trackingDb.collection('backup_logs');
+        await backupLogsCollection.createIndex({ timestamp: -1 });
+        await backupLogsCollection.createIndex({ status: 1 });
+        await backupLogsCollection.createIndex({ dbName: 1 });
+        logger.info('✓ Connected to tracking database (pooled)');
+    } catch (err) {
+        logger.warn('Failed to connect to tracking database:', err.message);
+    }
+
+    // Connect to production database (pooled)
+    try {
+        prodClient = new MongoClient(config.prodUri, mongoOptions);
+        await prodClient.connect();
+        logger.info('✓ Connected to production database (pooled)');
+    } catch (err) {
+        logger.warn('Failed to connect to production database:', err.message);
+    }
+
+    // Connect to test database (pooled)
+    try {
+        testClient = new MongoClient(config.testUri, mongoOptions);
+        await testClient.connect();
+        logger.info('✓ Connected to test database (pooled)');
+    } catch (err) {
+        logger.warn('Failed to connect to test database:', err.message);
+    }
+}
+
+// Log backup event to tracking database
+async function logBackupEvent(eventData) {
+    if (!trackingDb) {
+        logger.warn('Tracking database not connected, skipping log');
+        return;
+    }
+
+    try {
+        const backupLogsCollection = trackingDb.collection('backup_logs');
+        const document = {
+            timestamp: new Date(),
+            dbName: config.backupDbName,
+            ...eventData
+        };
+        await backupLogsCollection.insertOne(document);
+        logger.info('Backup event logged:', document);
+    } catch (err) {
+        logger.error('Error logging backup event:', err);
+    }
+}
+
+// Get backup history
+async function getBackupHistory(limit = 50) {
+    if (!trackingDb) {
+        return [];
+    }
+
+    try {
+        const backupLogsCollection = trackingDb.collection('backup_logs');
+        const logs = await backupLogsCollection
+            .find({ dbName: config.backupDbName })
+            .sort({ timestamp: -1 })
+            .limit(limit)
+            .toArray();
+        return logs;
+    } catch (err) {
+        logger.error('Error fetching backup history:', err);
+        return [];
+    }
+}
+
+// Load available backups
+async function loadBackups() {
+    try {
+        const files = await fs.readdir(config.backupDir);
+        state.backups = files
+            .filter(f => f.startsWith('backup_') && f.endsWith('.tar.gz'))
+            .sort()
+            .reverse()
+            .map(f => ({
+                name: f,
+                path: path.join(config.backupDir, f),
+                created: f.match(/backup_(\d{8}_\d{6})/)?.[1]
+            }));
+    } catch (err) {
+        logger.error('Error loading backups:', err);
+    }
+}
+
+// Execute shell command
+function executeCommand(cmd, args, options = {}) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(cmd, args, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            ...options
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        proc.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        proc.on('close', (code) => {
+            if (code === 0) {
+                resolve(stdout);
+            } else {
+                reject(new Error(`Command failed: ${stderr}`));
+            }
+        });
+
+        proc.on('error', (err) => {
+            reject(err);
+        });
+    });
+}
+
+// Validate MongoDB connection using pooled client
+async function validateConnection(type, client) {
+    try {
+        if (!client) {
+            logger.debug(`No client available for ${type} - skipping connection check`);
+            return false;
+        }
+        
+        const adminDb = client.db('admin');
+        await adminDb.command({ ping: 1 });
+        logger.debug(`✓ Connection verified: ${type}`);
+        return true;
+    } catch (err) {
+        logger.warn(`✗ Connection check failed for ${type}: ${err.message}`);
+        return false;
+    }
+}
+
+// Backup production database
+async function backupProduction() {
+    if (state.isRunning) {
+        throw new Error('Another operation is already running');
+    }
+
+    state.isRunning = true;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
+    const backupPath = path.join(config.backupDir, `backup_${timestamp}`);
+    const startTime = new Date();
+
+    try {
+        logger.info('Starting production backup...');
+
+        if (!await validateConnection('Production', prodClient)) {
+            throw new Error('Cannot connect to production database');
+        }
+
+        await fs.mkdir(backupPath, { recursive: true });
+
+        logger.info(`Dumping to ${backupPath}`);
+        await executeCommand('mongodump', [
+            `--uri=${config.prodUri}`,
+            `--db=${config.backupDbName}`,
+            `--out=${backupPath}`,
+            '--gzip',
+            '--numParallelCollections=4'
+        ]);
+
+        logger.info('Creating archive...');
+        const archivePath = `${backupPath}.tar.gz`;
+        await executeCommand('tar', [
+            '-czf',
+            archivePath,
+            '-C',
+            config.backupDir,
+            path.basename(backupPath)
+        ]);
+
+        await fs.rm(backupPath, { recursive: true });
+
+        state.lastBackup = archivePath;
+        await loadBackups();
+        
+        const endTime = new Date();
+        const duration = Math.round((endTime - startTime) / 1000);
+
+        // Log to tracking database
+        await logBackupEvent({
+            type: 'backup',
+            trigger: 'manual',
+            status: 'success',
+            fileName: path.basename(archivePath),
+            filePath: archivePath,
+            fileSize: (await fs.stat(archivePath)).size,
+            duration: duration
+        });
+
+        logger.info(`Backup completed: ${archivePath}`);
+
+        await cleanupOldBackups();
+
+        return { success: true, path: archivePath };
+    } catch (err) {
+        const endTime = new Date();
+        const duration = Math.round((endTime - startTime) / 1000);
+
+        // Log failure to tracking database
+        await logBackupEvent({
+            type: 'backup',
+            trigger: 'manual',
+            status: 'failed',
+            error: err.message,
+            duration: duration
+        });
+
+        logger.error('Backup failed:', err);
+        throw err;
+    } finally {
+        state.isRunning = false;
+    }
+}
+
+// Restore to test database
+async function restoreToTest(backupFile, dropDb = false) {
+    if (state.isRunning) {
+        throw new Error('Another operation is already running');
+    }
+
+    state.isRunning = true;
+    const startTime = new Date();
+
+    try {
+        logger.info(`Starting restore from ${backupFile}`);
+
+        if (!await validateConnection('Test', testClient)) {
+            throw new Error('Cannot connect to test database');
+        }
+
+        if (dropDb) {
+            logger.warn(`Dropping target database: ${config.restoreDbName}`);
+            try {
+                await executeCommand('mongosh', [
+                    config.testUri,
+                    '--eval',
+                    `db.getSiblingDB('${config.restoreDbName}').dropDatabase();`
+                ]);
+                logger.info(`Database ${config.restoreDbName} dropped`);
+            } catch (err) {
+                logger.warn('Drop failed (may not exist):', err.message);
+            }
+        }
+
+        logger.info('Restoring database...');
+        const tempDir = path.join(config.backupDir, `temp_${Date.now()}`);
+        await fs.mkdir(tempDir, { recursive: true });
+
+        logger.debug(`Extracting backup to: ${tempDir}`);
+        await executeCommand('tar', [
+            '-xzf',
+            backupFile,
+            '-C',
+            tempDir
+        ]);
+
+        // The tar contains: backup_[timestamp]/sylogate/[collections]
+        const backupName = path.basename(backupFile, '.tar.gz');
+        const dumpDir = path.join(tempDir, backupName);
+        const sourceDbPath = path.join(dumpDir, config.backupDbName);
+
+        logger.info(`Backup structure: ${backupName}`);
+        logger.info(`Dump directory: ${dumpDir}`);
+        logger.info(`Source DB path: ${sourceDbPath}`);
+        
+        // Verify the path exists
+        try {
+            const stat = await fs.stat(sourceDbPath);
+            logger.info(`✓ Source path exists: ${stat.isDirectory() ? 'directory' : 'file'}`);
+        } catch (err) {
+            logger.error(`✗ Source path does not exist: ${sourceDbPath}`);
+            throw new Error(`Cannot find backup data at ${sourceDbPath}`);
+        }
+
+        logger.info(`Restoring from backup database: ${config.backupDbName}`);
+        logger.info(`Restoring to test database: ${config.restoreDbName}`);
+        logger.info(`Collections path: ${sourceDbPath}`);
+        
+        try {
+            // Restore collections from backup into test database
+            const restoreOutput = await executeCommand('mongorestore', [
+                `--uri=${config.testUri}`,
+                `--db=${config.restoreDbName}`,
+                '--gzip',
+                sourceDbPath
+            ]);
+            
+            logger.info('Mongorestore completed');
+            logger.info('Output:', restoreOutput);
+        } catch (restoreErr) {
+            logger.error('Mongorestore failed:', restoreErr.message);
+            throw restoreErr;
+        }
+
+        await fs.rm(tempDir, { recursive: true });
+
+        const endTime = new Date();
+        const duration = Math.round((endTime - startTime) / 1000);
+
+        // Log successful restore
+        await logBackupEvent({
+            type: 'restore',
+            trigger: 'manual',
+            status: 'success',
+            sourceFile: path.basename(backupFile),
+            sourcePath: backupFile,
+            duration: duration,
+            droppedExisting: dropDb
+        });
+
+        logger.info('Restore completed successfully');
+        return { success: true, message: 'Restore completed' };
+    } catch (err) {
+        const endTime = new Date();
+        const duration = Math.round((endTime - startTime) / 1000);
+
+        // Log failed restore
+        await logBackupEvent({
+            type: 'restore',
+            trigger: 'manual',
+            status: 'failed',
+            sourceFile: path.basename(backupFile),
+            sourcePath: backupFile,
+            error: err.message,
+            duration: duration
+        });
+
+        logger.error('Restore failed:', err);
+        throw err;
+    } finally {
+        state.isRunning = false;
+    }
+}
+
+// Cleanup old backups
+async function cleanupOldBackups() {
+    try {
+        const cutoffDate = new Date(Date.now() - config.retentionDays * 24 * 60 * 60 * 1000);
+        const files = await fs.readdir(config.backupDir);
+
+        for (const file of files) {
+            if (file.startsWith('backup_') && file.endsWith('.tar.gz')) {
+                const filePath = path.join(config.backupDir, file);
+                const stat = await fs.stat(filePath);
+                if (stat.mtime < cutoffDate) {
+                    await fs.rm(filePath);
+                    logger.info(`Deleted old backup: ${file}`);
+                }
+            }
+        }
+    } catch (err) {
+        logger.error('Cleanup error:', err);
+    }
+}
+
+// Schedule cron jobs
+function scheduleJobs() {
+    if (config.backupSchedule) {
+        state.jobs.backup = cron.schedule(config.backupSchedule, async () => {
+            logger.info('Running scheduled backup');
+            try {
+                await backupProduction();
+            } catch (err) {
+                logger.error('Scheduled backup failed:', err);
+            }
+        });
+        logger.info(`Backup scheduled: ${config.backupSchedule}`);
+    }
+
+    if (config.restoreSchedule) {
+        state.jobs.restore = cron.schedule(config.restoreSchedule, async () => {
+            logger.info('Running scheduled restore');
+            try {
+                const latest = state.backups[0];
+                if (latest) {
+                    await restoreToTest(latest.path, true);
+                }
+            } catch (err) {
+                logger.error('Scheduled restore failed:', err);
+            }
+        });
+        logger.info(`Restore scheduled: ${config.restoreSchedule}`);
+    }
+}
+
+// Cache connection status with TTL
+const connectionCache = {
+    production: { status: false, lastCheck: 0, ttl: config.connectionCheckInterval },
+    test: { status: false, lastCheck: 0, ttl: config.connectionCheckInterval }
+};
+
+async function getConnectionStatus(type, client) {
+    const cache = connectionCache[type];
+    const now = Date.now();
+
+    // Return cached result if still valid
+    if (now - cache.lastCheck < cache.ttl) {
+        return cache.status;
+    }
+
+    // Check connection asynchronously and update cache
+    const displayName = type === 'production' ? 'Production' : 'Test';
+    validateConnection(displayName, client)
+        .then(result => {
+            connectionCache[type].status = result;
+            connectionCache[type].lastCheck = now;
+        });
+
+    // Return last known status while checking
+    return cache.status;
+}
+
+// Routes
+app.get('/api/status', async (req, res) => {
+    // Get cached status immediately, update asynchronously
+    const prodConnected = await getConnectionStatus('production', prodClient);
+    const testConnected = await getConnectionStatus('test', testClient);
+
+    res.json({
+        isRunning: state.isRunning,
+        lastBackup: state.lastBackup,
+        backups: state.backups,
+        connections: {
+            production: prodConnected,
+            test: testConnected
+        },
+        config: {
+            backupDbName: config.backupDbName,
+            restoreDbName: config.restoreDbName,
+            backupSchedule: config.backupSchedule,
+            restoreSchedule: config.restoreSchedule
+        }
+    });
+});
+
+app.post('/api/backup', async (req, res) => {
+    try {
+        const result = await backupProduction();
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/restore', async (req, res) => {
+    try {
+        const { backupFile, dropDb } = req.body;
+        const backup = state.backups.find(b => b.path === backupFile);
+        if (!backup) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+        const result = await restoreToTest(backupFile, dropDb || false);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/restore-latest', async (req, res) => {
+    try {
+        const { dropDb } = req.body;
+        if (!state.backups.length) {
+            return res.status(404).json({ error: 'No backups available' });
+        }
+        const result = await restoreToTest(state.backups[0].path, dropDb || false);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/logs', async (req, res) => {
+    try {
+        const logFile = process.env.LOG_FILE || 'logs/combined.log';
+        const logs = await fs.readFile(logFile, 'utf-8');
+        res.json({ logs: logs.split('\n').slice(-100) });
+    } catch (err) {
+        res.json({ logs: ['No logs available'] });
+    }
+});
+
+app.get('/api/backup-history', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const history = await getBackupHistory(limit);
+        res.json({ history });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Initialize application
+async function initialize() {
+    try {
+        await fs.mkdir(config.backupDir, { recursive: true });
+        await fs.mkdir('logs', { recursive: true });
+        logger.info('Application initialized');
+        await initializeConnections();
+        await loadBackups();
+        scheduleJobs();
+    } catch (err) {
+        logger.error('Initialization error:', err);
+        process.exit(1);
+    }
+}
+
+// Load available backups
+async function loadBackups() {
+    try {
+        const files = await fs.readdir(config.backupDir);
+        state.backups = files
+            .filter(f => f.startsWith('backup_') && f.endsWith('.tar.gz'))
+            .sort()
+            .reverse()
+            .map(f => ({
+                name: f,
+                path: path.join(config.backupDir, f),
+                created: f.match(/backup_(\d+)/)?.[1]
+            }));
+    } catch (err) {
+        logger.error('Error loading backups:', err);
+    }
+}
+
+// Start server after all functions are defined
+(async () => {
+    await initialize();
+    app.listen(PORT, () => {
+        logger.info(`MongoDB Backup App listening on port ${PORT}`);
+    });
+})();

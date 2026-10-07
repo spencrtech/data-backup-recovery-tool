@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MongoDB Multi-Database Backup Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .databases-table-wrapper {
+            overflow-x: auto;
+            border-radius: 5px;
+        }
+
+        .databases-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .databases-table thead {
+            background: #f9f9f9;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .databases-table thead th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            white-space: nowrap;
+        }
+
+        .databases-table tbody tr {
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+        }
+
+        .databases-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        .databases-table tbody td {
+            padding: 15px;
+            font-size: 0.95em;
+        }
+
+        .db-name {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .status-badge.connected {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status-badge.disconnected {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #48bb78;
+        }
+
+        .status-dot.disconnected {
+            background: #f56565;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .db-pair {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 10px;
+            align-items: center;
+            font-size: 0.9em;
+        }
+
+        .db-pair-item {
+            background: #f5f5f5;
+            padding: 12px;
+            border-radius: 5px;
+            border-left: 3px solid #667eea;
+        }
+
+        .db-pair-item.restore-to {
+            border-left-color: #48bb78;
+        }
+
+        .db-pair-arrow {
+            color: #999;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .db-label-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .db-label {
+            font-size: 0.75em;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .db-database {
+            font-weight: 600;
+            color: #333;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .schedule-info {
+            margin-top: 6px;
+            font-size: 0.75em;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .schedule-time {
+            background: #e6e8ff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 5px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #5568d3;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #38a169;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.85em;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.success {
+            background: #c6f6d5;
+            color: #22543d;
+            border-left: 4px solid #48bb78;
+        }
+
+        .message.error {
+            background: #fed7d7;
+            color: #742a2a;
+            border-left: 4px solid #f56565;
+        }
+
+        .message.info {
+            background: #bee3f8;
+            color: #2c5282;
+            border-left: 4px solid #667eea;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .logs-container {
+            background: #1a1a2e;
+            color: #e0e0ff;
+            padding: 20px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95em;
+            max-height: 400px;
+            overflow-y: auto;
+            line-height: 1.6;
+            border: 1px solid #2a2a4e;
+        }
+
+        .log-line {
+            padding: 2px 0;
+        }
+
+        .expand-row-btn {
+            background: none;
+            border: none;
+            color: #667eea;
+            cursor: pointer;
+            font-size: 1.2em;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+
+        .expand-row-btn:hover {
+            color: #5568d3;
+        }
+
+        .expanded-details {
+            display: none;
+        }
+
+        .expanded-details.show {
+            display: table-row;
+        }
+
+        .expanded-content {
+            padding: 20px;
+            background: #f9f9f9;
+        }
+
+        .backup-list {
+            list-style: none;
+            margin: 15px 0;
+        }
+
+        .backup-item {
+            background: white;
+            border-left: 4px solid #667eea;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .backup-item:hover {
+            background: #f5f5f5;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .backup-item.selected {
+            background: #e6e8ff;
+            border-left-color: #48bb78;
+        }
+
+        .backup-info {
+            flex: 1;
+        }
+
+        .backup-name {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .backup-date {
+            font-size: 0.85em;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .backup-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .restore-btn {
+            padding: 6px 12px;
+            background: #48bb78;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .restore-btn:hover {
+            background: #38a169;
+        }
+
+        .section-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #333;
+            margin-top: 20px;
+            margin-bottom: 15px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: #666;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: #667eea;
+            background: #f9f9f9;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* History */
+        .history-filters {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gMain Content Card with Tabs -->
+        <div class="card">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
+                <button class="tab" onclick="switchTab('history')">📋 History</button>
+                <button class="tab" onclick="switchTab('logs')">🔍 Logs</button>
+            </div>
+
+            <div id="messageContainer"></div>
+
+            <!-- Overview Tab -->
+            <div id="overview-tab" class="tab-content active">
+                <h2 style="border: none; padding: 0; margin-bottom: 20px;">Database Overview</h2>
+                color: #666;
+        }
+
+        .filter-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.95em;
+            cursor: pointer;
+            background: white;
+        }
+
+        .history-table-wrapper {
+            overflow-x: auto;
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 5px;
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .history-table thead {
+            position: sticky;
+            top: 0;
+            background: #f9f9f9;
+            z-index: 10;
+        }
+
+        .history-table thead tr {
+            border-bottom: 2px solid #667eea;
+        }
+
+        .history-table thead th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .history-table tbody tr {
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+        }
+
+        .history-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        .history-table tbody td {
+            padding: 12px;
+            font-size: 0.9em;
+        }
+
+        .status-cell {
+            font-weight: 600;
+        }
+
+        .status-cell.success {
+            color: #48bb78;
+        }
+
+        .status-cell.failed {
+            color: #f56565;
+        }
+
+        @media (max-width: 1024px) {
+            .db-pair {
+                grid-template-columns: 1fr;
+            }
+
+            .db-pair-arrow {
+                display: none;
+            }
+
+            .databases-table tbody td {
+                padding: 10px;
+                font-size: 0.85em;
+            }
+
+            .databases-table thead th {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .action-buttons {
+                flex-direction: column;
+            }
+
+            button {
+                width: 100%;
+            }
+
+            .card {
+                padding: 15px;
+            }
+
+            .databases-table {
+                font-size: 0.85em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🗄️ MongoDB Backup Manager</h1>
+            <p class="subtitle">Manage multiple database backups and restores</p>
+        </header>
+
+        <!-- Databases Overview Card -->
+        <div class="card">
+            <h2>📊 Database Overview</h2>
+            <div id="messageContainer"></div>
+
+            <div class="databases-table-wrapper">
+                <table class="databases-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 5%"></th>
+                            <th style="width: 20%">Database</th>
+                            <th style="width: 45%">Backup From → Restore To</th>
+                            <th style="width: 10%">Backups</th>
+                            <th style="width: 20%">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="databasesTableBody">
+            </div>
+
+            <!-- History Tab -->
+            <div id="history-tab" class="tab-content">
+                <h2 style="border: none; padding: 0; margin-bottom: 20px;">Backup & Restore History</h2>
+                
+                <div class="history-filters">
+                    <div class="filter-group">
+                        <label for="dbFilter">Database:</label>
+                        <select id="dbFilter" onchange="loadHistory()">
+                            <option value="">All Databases</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="typeFilter">Type:</label>
+                        <select id="typeFilter" onchange="filterHistory()">
+                            <option value="">All</option>
+                            <option value="backup">Backup</option>
+                            <option value="restore">Restore</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="statusFilter">Status:</label>
+                        <select id="statusFilter" onchange="filterHistory()">
+                            <option value="">All</option>
+                            <option value="success">Success</option>
+        let allHistory = [];
+        let filteredHistory = [];
+
+        async function loadDatabases() {
+            try {
+                const response = await fetch('/api/databases');
+                const data = await response.json();
+                databases = data.databases || [];
+                renderDatabases();
+                updateDbFilterOptions();
+            } catch (err) {
+                showMessage('Error loading databases: ' + err.message, 'error');
+                console.error('Error loading databases:', err);
+            }
+        }
+
+        function updateDbFilterOptions() {
+            const select = document.getElementById('dbFilter');
+            select.innerHTML = '<option value="">All Databases</option>';
+            databases.forEach(db => {
+                const option = document.createElement('option');
+                option.value = db.id;
+                option.textContent = db.name;
+                select.appendChild(option);
+            });
+        }
+
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+
+            // Load data if needed
+            if (tabName === 'history') {
+                const dbFilter = document.getElementById('dbFilter').value;
+                if (dbFilter) {
+                    loadHistory();
+                }
+            } else if (tabName === 'logs') {
+                refreshLogs();
+            }
+        }
+
+        async function loadHistory() {
+            const dbId = document.getElementById('dbFilter').value;
+            
+            if (!dbId) {
+                // Load all history
+                try {
+                    allHistory = [];
+                    for (const db of databases) {
+                        const response = await fetch(`/api/databases/${db.id}/history?limit=100`);
+                        const data = await response.json();
+                        if (data.history) {
+                            allHistory.push(...data.history.map(h => ({...h, dbName: db.name})));
+                        }
+                    }
+                    allHistory.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                } catch (err) {
+                    console.error('Error loading all history:', err);
+                }
+            } else {
+                // Load history for specific database
+                try {
+                    const db = databases.find(d => d.id === dbId);
+                    const response = await fetch(`/api/databases/${dbId}/history?limit=100`);
+                    const data = await response.json();
+                    allHistory = (data.history || []).map(h => ({...h, dbName: db.name}));
+                } catch (err) {
+                    console.error('Error loading history:', err);
+                    allHistory = [];
+                }
+            }
+
+            filterHistory();
+        }
+
+        function filterHistory() {
+            const typeFilter = document.getElementById('typeFilter').value;
+            const statusFilter = document.getElementById('statusFilter').value;
+
+            filteredHistory = allHistory.filter(entry => {
+                if (typeFilter && entry.type !== typeFilter) return false;
+                if (statusFilter && entry.status !== statusFilter) return false;
+                return true;
+            });
+
+            renderHistory();
+        }
+
+        function renderHistory() {
+            const tbody = document.getElementById('historyTableBody');
+            
+            if (!filteredHistory || filteredHistory.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; color: #999;">No history found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filteredHistory.map(entry => {
+                const timestamp = new Date(entry.timestamp).toLocaleString();
+                const type = entry.type === 'backup' ? '📦 Backup' : '↩️ Restore';
+                const trigger = entry.trigger === 'manual' ? '👤 Manual' : '⏰ Scheduled';
+                const statusClass = entry.status === 'success' ? 'success' : 'failed';
+                const statusIcon = entry.status === 'success' ? '✓' : '✗';
+                const duration = entry.duration ? `${entry.duration}s` : '-';
+                
+                let details = '-';
+                if (entry.status === 'success' && entry.fileName) {
+                    details = `<code style="background: #f0f0f0; padding: 4px 8px; border-radius: 3px; font-size: 0.85em;">${entry.fileName}</code>`;
+                } else if (entry.status === 'success' && entry.sourceFile) {
+                    details = `<code style="background: #f0f0f0; padding: 4px 8px; border-radius: 3px; font-size: 0.85em;">${entry.sourceFile}</code>`;
+                } else if (entry.error) {
+                    details = `<small style="color: #f56565;">${entry.error}</small>`;
+                }
+
+                return `
+                    <tr>
+                        <td>${timestamp}</td>
+                        <td><strong>${entry.dbName || 'Unknown'}</strong></td>
+                        <td>${type}</td>
+                        <td>${trigger}</td>
+                        <td class="status-cell ${statusClass}">${statusIcon} ${entry.status}</td>
+                        <td>${duration}</td>
+                        <td>${details}</td>
+                    </tr>
+                `;
+            }).join('');                   <th>Timestamp</th>
+                                <th>Database</th>
+                                <th>Type</th>
+                                <th>Trigger</th>
+                                <th>Status</th>
+                                <th>Duration</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTableBody">
+                            <tr>
+                                <td colspan="7" style="text-align: center; padding: 20px; color: #999;">
+                                    Select a database to view history
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div id="logs-tab" class="tab-content">
+                <h2 style="border: none; padding: 0; margin-bottom: 20px;">System Logs</h2>
+                <div class="logs-container" id="logsContainer">
+                    <div class="log-line">Loading logs...</div>
+                </div>
+                <button class="btn-primary" onclick="refreshLogs()" style="margin-top: 15px;">
+                    🔄 Refresh Logs
+                </button>
+            </divrd -->
+        <div class="card">
+            <h2>📋 System Logs</h2>
+            <div class="logs-container" id="logsContainer">
+                <div class="log-line">Loading logs...</div>
+            </div>
+            <button class="btn-primary" onclick="refreshLogs()" style="margin-top: 15px;">
+                🔄 Refresh Logs
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const POLL_INTERVAL = 5000;
+        let databases = [];
+        let selectedBackups = {};
+
+        async function loadDatabases() {
+            try {
+                const response = await fetch('/api/databases');
+                const data = await response.json();
+                databases = data.databases || [];
+                renderDatabases();
+            } catch (err) {
+                showMessage('Error loading databases: ' + err.message, 'error');
+                console.error('Error loading databases:', err);
+            }
+        }
+
+        function renderDatabases() {
+            const tbody = document.getElementById('databasesTableBody');
+            
+            if (!databases || databases.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No databases configured</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = databases.map(db => {
+                const backupScheduleText = formatSchedule(db.backupSchedule);
+                const restoreScheduleText = formatSchedule(db.restoreSchedule);
+                
+                return `
+                <tr>
+                    <td>
+                        <button class="expand-row-btn" onclick="toggleExpanded('${db.id}')">▶</button>
+                    </td>
+                    <td>
+                        <div class="db-name">${db.name}</div>
+                        <div style="font-size: 0.8em; color: #999;">ID: ${db.id}</div>
+                    </td>
+                    <td>
+                        <div class="db-pair">
+                            <div class="db-pair-item">
+                                <div class="db-label-header">
+                                    <span class="db-label">📥 Backup From</span>
+                                    <span class="status-badge ${db.connections.backupFrom ? 'connected' : 'disconnected'}">
+                                        <span class="status-dot ${db.connections.backupFrom ? 'connected' : 'disconnected'}"></span>
+                                        ${db.connections.backupFrom ? '✓' : '✗'}
+                                    </span>
+                                </div>
+                                <div class="db-database">${db.backupFrom.database}</div>
+                                ${backupScheduleText ? `<div class="schedule-info">⏰ ${backupScheduleText}</div>` : ''}
+                            </div>
+                            <div class="db-pair-arrow">→</div>
+                            <div class="db-pair-item restore-to">
+                                <div class="db-label-header">
+                                    <span class="db-label">📤 Restore To</span>
+                                    <span class="status-badge ${db.connections.restoreTo ? 'connected' : 'disconnected'}">
+                                        <span class="status-dot ${db.connections.restoreTo ? 'connected' : 'disconnected'}"></span>
+                                        ${db.connections.restoreTo ? '✓' : '✗'}
+                                    </span>
+                                </div>
+                                <div class="db-database">${db.restoreTo.database}</div>
+                                ${restoreScheduleText ? `<div class="schedule-info">⏰ ${restoreScheduleText}</div>` : ''}
+                            </div>
+                        </div>
+                    </td>
+                    <td style="text-align: center;">
+                        <strong style="font-size: 1.3em;">${db.backupCount}</strong>
+                        <div style="font-size: 0.8em; color: #999;">
+                            ${db.lastBackup ? new Date(parseInt(db.lastBackup)).toLocaleDateString() : 'None'}
+                        </div>
+                    </td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="btn-primary btn-small" onclick="performBackup('${db.id}')" ${!db.connections.backupFrom ? 'disabled' : ''}>
+                                📦 Backup Now
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                <tr class="expanded-details" id="expanded-${db.id}">
+                    <td colspan="5">
+                        <div class="expanded-content">
+                            <div class="section-title">Recent Backups</div>
+                            <div id="backups-${db.id}">Loading...</div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            }).join('');
+
+            databases.forEach(db => {
+                loadBackupsForDb(db.id);
+            });
+        }
+
+        function formatSchedule(cronExpression) {
+            if (!cronExpression) return null;
+
+            const parts = cronExpression.split(' ');
+            if (parts.length < 5) return 'Custom schedule';
+
+            const minute = parts[0];
+            const hour = parts[1];
+            const dayOfMonth = parts[2];
+            const month = parts[3];
+            const dayOfWeek = parts[4];
+
+            let timeStr = '';
+            if (hour !== '*' && minute !== '*') {
+                const hourNum = parseInt(hour);
+                const minNum = parseInt(minute);
+                const ampm = hourNum >= 12 ? 'PM' : 'AM';
+                const displayHour = hourNum % 12 || 12;
+                timeStr = `${String(displayHour).padStart(2, '0')}:${String(minNum).padStart(2, '0')} ${ampm}`;
+            }
+
+            let frequency = '';
+            if (dayOfMonth !== '*' && month !== '*') {
+                frequency = `on day ${dayOfMonth}`;
+            } else if (dayOfWeek !== '*' && dayOfWeek !== '0-6') {
+                const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                if (dayOfWeek >= 0 && dayOfWeek < 7) {
+                    frequency = `every ${days[dayOfWeek]}`;
+                }
+            } else if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+                frequency = 'daily';
+            }
+
+            if (timeStr && frequency) {
+                return `<span class="schedule-time">${timeStr}</span> ${frequency}`;
+            }
+            return timeStr || 'Custom schedule';
+        }
+
+        function toggleExpanded(dbId) {
+            const row = document.getElementById(`expanded-${dbId}`);
+            row.classList.toggle('show');
+            
+            const btn = event.target;
+            if (row.classList.contains('show')) {
+                btn.style.transform = 'rotate(90deg)';
+            } else {
+                btn.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        async function loadBackupsForDb(dbId) {
+            try {
+                const response = await fetch(`/api/databases/${dbId}/backups`);
+                const data = await response.json();
+                const backups = data.backups || [];
+                
+                const container = document.getElementById(`backups-${dbId}`);
+                if (!backups || backups.length === 0) {
+                    container.innerHTML = '<p style="color: #999;">No backups available</p>';
+                    return;
+                }
+
+                container.innerHTML = `
+                    <ul class="backup-list">
+                        ${backups.map(backup => `
+                            <li class="backup-item" onclick="selectBackup('${dbId}', '${backup.path}', this)">
+                                <div class="backup-info">
+                                    <div class="backup-name">📄 ${backup.name}</div>
+                                    <div class="backup-date">Created: ${new Date(parseInt(backup.created)).toLocaleString()}</div>
+                                </div>
+                                <div class="backup-actions">
+                                    <button class="restore-btn" onclick="event.stopPropagation(); performRestore('${dbId}', '${backup.path}')">Restore</button>
+                                </div>
+                            </li>
+                        `).join('')}
+                    </ul>
+                `;
+            } catch (err) {
+                console.error('Error loading backups:', err);
+                document.getElementById(`backups-${dbId}`).innerHTML = 
+                    '<p style="color: #f56565;">Error loading backups</p>';
+            }
+        }
+
+        function selectBackup(dbId, path, element) {
+            document.querySelectorAll(`#backups-${dbId} .backup-item`).forEach(el => {
+                el.classList.remove('selected');
+            });
+            element.classList.add('selected');
+            selectedBackups[dbId] = path;
+        }
+
+        async function performBackup(dbId) {
+            const db = databases.find(d => d.id === dbId);
+            if (!db) return;
+
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Backing up...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/databases/${dbId}/backup`, { method: 'POST' });
+                const data = await response.json();
+
+                if (response.ok) {
+                    showMessage(`✅ Backup completed for ${db.name}!`, 'success');
+                    setTimeout(loadDatabases, 1000);
+                } else {
+                    showMessage(`❌ Backup failed: ${data.error}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`❌ Error: ${err.message}`, 'error');
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function performRestore(dbId, backupPath) {
+            const db = databases.find(d => d.id === dbId);
+            if (!db || !db.connections.restoreTo) {
+                showMessage('Cannot restore: restore target is not connected', 'error');
+                return;
+            }
+
+            const dropDb = confirm(`Drop existing database "${db.restoreTo.database}" before restore?`);
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Restoring...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/databases/${dbId}/restore`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ backupFile: backupPath, dropDb })
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    showMessage(`✅ Restore completed for ${db.name}!`, 'success');
+                } else {
+                    showMessage(`❌ Restore failed: ${data.error}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`❌ Error: ${err.message}`, 'error');
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function showMessage(text, type) {
+            const container = document.getElementById('messageContainer');
+            container.innerHTML = `<div class="message show ${type}">${text}</div>`;
+            
+            if (type !== 'error') {
+                setTimeout(() => {
+                    container.innerHTML = '';
+                }, 5000);
+            }
+        }
+
+        async function refreshLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const data = await response.json();
+                const container = document.getElementById('logsContainer');
+                container.innerHTML = (data.logs || [])
+                    .map(line => `<div class="log-line">${escapeHtml(line)}</div>`)
+                    .join('');
+                container.scrollTop = container.scrollHeight;
+            } catch (err) {
+                console.error('Error loading logs:', err);
+            }
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // Initialize
+        loadDatabases();
+        refreshLogs();
+        setInterval(loadDatabases, POLL_INTERVAL);
+        setInterval(refreshLogs, POLL_INTERVAL * 2);
+    </script>
+</body>
+</html>

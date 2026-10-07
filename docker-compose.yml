@@ -1,0 +1,23 @@
+name: spencer-data-backup
+
+services:
+  spencer:
+    build: .
+    image: ${SPENCER_IMAGE:-spencer-data-backup:local}
+    container_name: spencer-data-backup
+    init: true
+    ports:
+      - "${SPENCER_PORT:-7480}:7480"
+    environment:
+      PORT: "7480"
+      DATA_DIR: /data
+      BACKUP_DIR: /data/backups
+    volumes:
+      - spencer-data:/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  spencer-data:
+    name: ${SPENCER_DATA_VOLUME:-spencer-data}

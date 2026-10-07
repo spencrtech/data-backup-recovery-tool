@@ -1,0 +1,16 @@
+.git
+.github
+.env*
+node_modules
+data
+backups
+logs
+*.log
+databases.json
+firebase-service-account.json
+app.js.bak
+public/*.bak
+public/*.broken
+test
+README.md
+FIREBASE_SETUP.md

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101815">
+    <title>Spencer Data Backup</title>
+    <link rel="stylesheet" href="/styles.css?v=2.0.0-alpha.3">
+</head>
+<body>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+    <main id="setup-view" class="centered-view hidden">
+        <section class="onboarding-shell">
+            <div class="onboarding-brand">
+                <div class="brand-mark large" aria-hidden="true"><span></span><span></span><span></span></div>
+                <p class="eyebrow">SPENCER LABS</p>
+                <h1>Backups that<br>prove themselves.</h1>
+                <p class="onboarding-copy">Spencer protects your MongoDB data, verifies every run, and keeps recovery within reach.</p>
+                <div class="feature-stack">
+                    <div><b>01</b><span>Encrypted configuration</span></div>
+                    <div><b>02</b><span>Private storage destinations</span></div>
+                    <div><b>03</b><span>Persistent job history</span></div>
+                </div>
+            </div>
+            <form id="setup-form" class="onboarding-form">
+                <div class="step-indicator"><span class="active"></span><span></span><span></span></div>
+                <p class="eyebrow dark">FIRST-RUN SETUP</p>
+                <h2>Set up your control plane</h2>
+                <p class="muted">Create the local administrator and choose where this machine keeps backups. You can add Firebase and S3 next.</p>
+                <label>Instance name<input name="instanceName" value="Production backups" required autocomplete="organization"></label>
+                <div class="field-grid">
+                    <label>Administrator username<input name="username" value="admin" required autocomplete="username"></label>
+                    <label>Password<input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="10+ characters"></label>
+                </div>
+                <label>Local backup directory<input name="localPath" value="/data/backups" required><small>Inside Docker, mount the host directory to this path.</small></label>
+                <div id="setup-error" class="form-error hidden"></div>
+                <button class="button primary wide" type="submit">Create workspace <span>→</span></button>
+                <p class="security-note">Your master encryption key and SQLite database stay on this machine.</p>
+            </form>
+        </section>
+    </main>
+
+    <main id="login-view" class="centered-view hidden">
+        <section class="login-card">
+            <div class="brand-lockup"><div class="brand-mark"><span></span><span></span><span></span></div><div><strong>Spencer</strong><small>DATA BACKUP</small></div></div>
+            <p class="eyebrow dark">WELCOME BACK</p>
+            <h1>Sign in to your workspace</h1>
+            <form id="login-form">
+                <label>Username<input name="username" required autocomplete="username"></label>
+                <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+                <div id="login-error" class="form-error hidden"></div>
+                <button class="button primary wide" type="submit">Sign in</button>
+            </form>
+            <form id="mfa-form" class="hidden">
+                <p class="muted">Enter the six-digit code from your authenticator app.</p>
+                <label>Authenticator code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code" placeholder="000000"></label>
+                <div id="mfa-error" class="form-error hidden"></div>
+                <button class="button primary wide" type="submit">Verify and continue</button>
+                <button id="mfa-back" class="button secondary wide" type="button">Use another account</button>
+            </form>
+        </section>
+    </main>
+
+    <div id="app-view" class="app-shell hidden">
+        <aside class="sidebar">
+            <div class="brand-lockup light"><div class="brand-mark"><span></span><span></span><span></span></div><div><strong>Spencer</strong><small>DATA BACKUP</small></div></div>
+            <nav id="main-nav" aria-label="Main navigation">
+                <button data-page="overview" class="active"><span>⌂</span>Overview</button>
+                <button data-page="sources"><span>◉</span>Sources</button>
+                <button data-page="destinations"><span>◇</span>Destinations</button>
+                <button data-page="policies"><span>◷</span>Policies</button>
+                <button data-page="jobs"><span>↗</span>Jobs</button>
+                <button data-page="recovery"><span>↩</span>Recovery</button>
+                <button data-page="storage"><span>▱</span>Storage</button>
+                <button data-page="settings"><span>⚙</span>Settings</button>
+            </nav>
+            <div class="sidebar-bottom">
+                <div class="service-health"><span class="health-dot"></span><div><strong>System operational</strong><small>Worker and scheduler ready</small></div></div>
+                <button id="logout-button" class="profile-button"><span id="profile-initial">A</span><span id="profile-name">Administrator</span><b>↪</b></button>
+            </div>
+        </aside>
+
+        <section class="workspace">
+            <header class="topbar">
+                <div><p class="eyebrow dark">CONTROL PLANE</p><h1 id="page-title">Overview</h1></div>
+                <div class="topbar-actions"><span id="live-indicator" class="live-pill"><i></i>Live</span><button id="primary-action" class="button primary">Run backup</button></div>
+            </header>
+            <div id="page-content" class="page-content"></div>
+        </section>
+    </div>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-backdrop" data-close-modal></div>
+        <section class="modal-card">
+            <button class="modal-close" data-close-modal aria-label="Close">×</button>
+            <div id="modal-content"></div>
+        </section>
+    </div>
+
+    <script src="/ui.js?v=2.0.0-alpha.3" defer></script>
+</body>
+</html>
