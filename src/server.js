@@ -56,14 +56,33 @@ function slugId(prefix) {
     return `${prefix}_${crypto.randomUUID()}`;
 }
 
-async function inspectMongo(config) {
+function mongoDefaultsFromUri(uri) {
+    const value = String(uri || '').trim();
+    const queryIndex = value.indexOf('?');
+    const parameters = new URLSearchParams(queryIndex >= 0 ? value.slice(queryIndex + 1) : '');
+    const withoutQuery = queryIndex >= 0 ? value.slice(0, queryIndex) : value;
+    const schemeEnd = withoutQuery.indexOf('://');
+    const pathStart = schemeEnd >= 0 ? withoutQuery.indexOf('/', schemeEnd + 3) : -1;
+    let database = '';
+    if (pathStart >= 0) {
+        try { database = decodeURIComponent(withoutQuery.slice(pathStart + 1)).trim(); }
+        catch { database = withoutQuery.slice(pathStart + 1).trim(); }
+    }
+    return { database, authDatabase: parameters.get('authSource') || 'admin' };
+}
+
+function mongoConnectionOptions(config) {
     const connectTimeoutMS = Math.max(5000, Number(process.env.MONGO_CONNECT_TIMEOUT_MS) || 15000);
     const serverSelectionTimeoutMS = Math.max(connectTimeoutMS, Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS) || 20000);
-    const client = new MongoClient(config.uri, {
+    return {
         serverSelectionTimeoutMS,
         connectTimeoutMS,
         ...(config.authDatabase && !/[?&]authSource=/i.test(config.uri) ? { authSource: config.authDatabase } : {})
-    });
+    };
+}
+
+async function inspectMongo(config) {
+    const client = new MongoClient(config.uri, mongoConnectionOptions(config));
     try {
         await client.connect();
         const db = client.db(config.database);
@@ -79,6 +98,38 @@ async function inspectMongo(config) {
                 indexBytes: stats.indexSize || 0
             }
         };
+    } finally {
+        await client.close();
+    }
+}
+
+async function discoverMongo(config) {
+    const defaults = mongoDefaultsFromUri(config.uri);
+    const authDatabase = /[?&]authSource=/i.test(config.uri) ? defaults.authDatabase : (config.authDatabase || defaults.authDatabase);
+    const client = new MongoClient(config.uri, mongoConnectionOptions({ ...config, authDatabase }));
+    try {
+        await client.connect();
+        const result = await client.db('admin').admin().listDatabases({ nameOnly: true, authorizedDatabases: true });
+        const databases = [...new Set([
+            defaults.database,
+            ...result.databases.map((item) => item.name).filter((name) => !['admin', 'config', 'local'].includes(name))
+        ].filter(Boolean))].sort();
+        return {
+            ok: true,
+            databases,
+            database: defaults.database || (databases.length === 1 ? databases[0] : ''),
+            authDatabase
+        };
+    } catch (error) {
+        if (/not authorized|unauthorized/i.test(error.message)) {
+            return {
+                ok: true,
+                databases: defaults.database ? [defaults.database] : [],
+                database: defaults.database,
+                authDatabase
+            };
+        }
+        throw error;
     } finally {
         await client.close();
     }
@@ -284,8 +335,17 @@ async function startServer(options = {}) {
         try { res.json(await inspectMongo({ uri, database, authDatabase })); }
         catch (error) { res.status(400).json({ error: safeError(error) }); }
     });
+    app.post('/api/sources/discover', async (req, res) => {
+        const { uri, authDatabase } = req.body || {};
+        if (!uri) return res.status(400).json({ error: 'MongoDB URI is required' });
+        try { res.json(await discoverMongo({ uri, authDatabase })); }
+        catch (error) { res.status(400).json({ error: safeError(error) }); }
+    });
     app.post('/api/sources', async (req, res) => {
-        const { name, uri, database, authDatabase = 'admin' } = req.body || {};
+        const { name, uri } = req.body || {};
+        const defaults = mongoDefaultsFromUri(uri);
+        const database = String(req.body?.database || defaults.database || '').trim();
+        const authDatabase = String(/[?&]authSource=/i.test(uri) ? defaults.authDatabase : (req.body?.authDatabase || defaults.authDatabase || 'admin')).trim();
         if (!name || !uri || !database) return res.status(400).json({ error: 'Name, MongoDB URI, and database are required' });
         try {
             const test = await inspectMongo({ uri, database, authDatabase });
@@ -575,4 +635,4 @@ async function startServer(options = {}) {
     });
 }
 
-module.exports = { startServer };
+module.exports = { startServer, mongoDefaultsFromUri };

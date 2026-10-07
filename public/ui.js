@@ -395,9 +395,29 @@ $$('[data-close-modal]').forEach((element) => element.addEventListener('click', 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
 
 function openSourceModal() {
-    showModal(`<p class="eyebrow dark">NEW SOURCE</p><h2>Connect MongoDB</h2><p>Spencer tests the connection before saving. The URI is encrypted with this machine's master key.</p><form id="source-form"><label>Display name<input name="name" required placeholder="Customer API production"></label><label>MongoDB connection URI<input name="uri" type="password" required placeholder="mongodb+srv://user:password@cluster…" autocomplete="off"></label><div class="field-grid"><label>Database name<input name="database" required placeholder="application_production"></label><label>Authentication database<input name="authDatabase" value="admin" required><small>Usually admin for Atlas and root users</small></label></div><div class="modal-actions"><button type="button" class="button secondary" data-close-modal>Cancel</button><button class="button primary" type="submit">Test and save</button></div></form>`);
+    showModal(`<p class="eyebrow dark">NEW SOURCE</p><h2>Connect MongoDB</h2><p>Paste one connection URI. Spencer will connect, discover the databases you can access, and infer authentication settings.</p><form id="source-form"><label>Display name<input name="name" required placeholder="Customer API production"></label><label>MongoDB connection URI<input name="uri" type="password" required placeholder="mongodb+srv://user:password@cluster…" autocomplete="off"></label><div class="connection-discovery"><button class="button secondary" id="discover-databases" type="button">Discover databases</button><small id="discovery-status">Database access will be checked before anything is saved.</small></div><div class="field-grid"><label>Database name<input name="database" list="mongo-database-options" required placeholder="Discover or enter a database"><datalist id="mongo-database-options"></datalist></label><label>Authentication database<input name="authDatabase" value="admin" required><small>Detected from authSource; otherwise admin</small></label></div><div class="modal-actions"><button type="button" class="button secondary" data-close-modal>Cancel</button><button class="button primary" type="submit">Test and save</button></div></form>`);
     $('[data-close-modal]', $('#modal-content')).onclick = closeModal;
-    $('#source-form').onsubmit = async (event) => submitModal(event, '/api/sources', 'MongoDB source connected');
+    const form = $('#source-form');
+    const discover = async () => {
+        const button = $('#discover-databases');
+        const status = $('#discovery-status');
+        const uri = form.elements.uri.value.trim();
+        if (!uri) return toast('Paste the MongoDB connection URI first.', 'error');
+        button.disabled = true; button.textContent = 'Connecting…'; status.textContent = 'Checking cluster access and reading database names…';
+        try {
+            const result = await api('/api/sources/discover', { method: 'POST', body: { uri, authDatabase: form.elements.authDatabase.value } });
+            $('#mongo-database-options').innerHTML = result.databases.map((name) => `<option value="${escapeHtml(name)}"></option>`).join('');
+            if (result.database) form.elements.database.value = result.database;
+            form.elements.authDatabase.value = result.authDatabase || 'admin';
+            status.textContent = result.databases.length
+                ? `${result.databases.length} database${result.databases.length === 1 ? '' : 's'} found. Select one or enter its name.`
+                : 'Connected successfully. Enter the database name because this user cannot list databases.';
+        } catch (error) { status.textContent = error.message; toast(error.message, 'error'); }
+        finally { button.disabled = false; button.textContent = 'Discover databases'; }
+    };
+    $('#discover-databases').onclick = discover;
+    form.elements.uri.onchange = discover;
+    form.onsubmit = async (event) => submitModal(event, '/api/sources', 'MongoDB source connected');
 }
 
 function destinationFields(type) {
