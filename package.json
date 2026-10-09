@@ -1,6 +1,6 @@
 {
   "name": "spencer-data-backup",
-  "version": "2.0.0-alpha.7",
+  "version": "2.0.0-beta.1",
   "description": "Self-hosted MongoDB backup control plane by Spencer",
   "main": "app.js",
   "scripts": {

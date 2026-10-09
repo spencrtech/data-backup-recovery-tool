@@ -65,21 +65,53 @@ To expose a different host port:
 SPENCER_PORT=8080 docker compose up -d
 ```
 
-## One-command installer
+## Install Spencer
 
 On Linux or macOS with Docker or Podman installed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/spencrtech/data-backup-recovery-tool/main/scripts/install.sh | sh
+curl -fsSL https://github.com/spencrtech/data-backup-recovery-tool/releases/download/v2.0.0-beta.1/spencer | sh
 ```
 
 On Windows with Docker Desktop or Podman Desktop installed, run in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/spencrtech/data-backup-recovery-tool/main/scripts/install.ps1 | iex
+& ([scriptblock]::Create((irm 'https://github.com/spencrtech/data-backup-recovery-tool/releases/download/v2.0.0-beta.1/spencer.ps1'))) -Command install
 ```
 
-The scripts detect Docker or Podman, pull `ghcr.io/spencrtech/spencer-data-backup:latest`, create persistent storage, start the service, wait for readiness, and print local/network URLs. No repository clone or application configuration is required before installation.
+The installer detects Docker or Podman, pulls the multi-architecture image, creates persistent storage, starts the service, waits for readiness, and prints the local URL. No repository clone or application configuration is required. New installations bind to `127.0.0.1` by default so they are not exposed to the local network or internet.
+
+To install on a server that should accept network connections, explicitly choose a bind address and protect Spencer with a VPN or HTTPS reverse proxy:
+
+```bash
+curl -fsSL https://github.com/spencrtech/data-backup-recovery-tool/releases/download/v2.0.0-beta.1/spencer | SPENCER_BIND=0.0.0.0 sh
+```
+
+Do not expose port `7480` directly to the public internet.
+
+## Manage an installation
+
+Download the lifecycle command once:
+
+```bash
+curl -fsSL https://github.com/spencrtech/data-backup-recovery-tool/releases/download/v2.0.0-beta.1/spencer -o spencer
+chmod +x spencer
+```
+
+Then use:
+
+```bash
+./spencer install
+./spencer update
+./spencer status
+./spencer logs
+./spencer export ./spencer-control-plane.tar.gz
+./spencer uninstall
+```
+
+`update` preserves the existing port, bind address, and data volume, and automatically rolls back if the new container fails its readiness check. `export` briefly stops the service to create a consistent archive containing `spencer.db`, `master.key`, and related control-plane state. Store that archive securely. `uninstall` keeps the data volume by default; `uninstall --purge` permanently removes it.
+
+On Windows, save `spencer.ps1` from the release and use `-Command update`, `-Command status`, `-Command logs`, `-Command export -Output <path>`, or `-Command uninstall`. Add `-Purge` only when the stored Spencer data should be permanently removed.
 
 ## Storage destinations
 
@@ -137,7 +169,7 @@ npm audit --audit-level=moderate
 docker compose config
 ```
 
-The container workflow builds and publishes Linux `amd64` and `arm64` images to GitHub Container Registry on `main` and version tags.
+The container workflow builds and publishes Linux `amd64` and `arm64` images to GitHub Container Registry on `main` and version tags. Version tags also create a GitHub release containing the Linux/macOS lifecycle script, Windows PowerShell script, generated release notes, and SHA-256 checksums.
 
 ## Next milestones
 
@@ -145,4 +177,4 @@ The container workflow builds and publishes Linux `amd64` and `arm64` images to 
 - Multi-user management and fine-grained role-based access control
 - Provider billing APIs and monthly cost forecasting
 - Signed backup downloads and disaster-recovery export
-- Upgrade, rollback, and configuration backup commands
+- Native desktop installers that do not require Docker or Podman
